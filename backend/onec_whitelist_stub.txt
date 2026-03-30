@@ -1,0 +1,5 @@
+# One plate per line. This file is used by StubFileWhitelistProvider.
+# Keep normalized or raw values; pipeline will normalize at load time.
+AA0055BP
+BH8300TI
+AE7082KA
