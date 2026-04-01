@@ -2,7 +2,7 @@
 
 Monorepo with:
 - `backend/` — ALPR + barrier decision backend
-- `frontend/alrp-front/` — Next.js dashboard
+- `frontend/` — Next.js dashboard
 
 ## Implemented
 
@@ -14,6 +14,7 @@ Monorepo with:
 - SQLite persistence via SQLAlchemy ORM.
 - Daily 1C sync interface with local stub provider.
 - Dry-run barrier controller (no hardware command yet).
+- Live Preview frame in dashboard (annotated snapshot for demo/debug).
 
 ## Run Backend Pipeline
 
@@ -31,15 +32,19 @@ uv sync
 uv run uvicorn app.api_server:app --host 0.0.0.0 --port 8000 --reload
 ```
 
+When running via Docker Compose, backend container starts both the recognition pipeline (`main.py`) and API (`uvicorn`) together.
+
 ## Run Frontend Dashboard
 
 ```powershell
-cd frontend/alrp-front
+cd frontend
 npm install
 npm run dev
 ```
 
-Frontend reads backend URL from `NEXT_PUBLIC_BACKEND_API_BASE` (default `http://127.0.0.1:8000`).
+Frontend reads backend URL from `NEXT_PUBLIC_BACKEND_API_BASE` (default `http://localhost:8000`).
+
+To see live preview on dashboard, the recognition pipeline must be running (`uv run python main.py`) because preview images are generated in the pipeline loop.
 
 ## 1C Stub Data
 
@@ -48,6 +53,9 @@ Edit `backend/onec_whitelist_stub.txt` and keep one plate per line.
 ## Important Environment Variables
 
 - `CAMERA_SNAPSHOT_URL` (default camera snapshot endpoint)
+- `CAMERA_USERNAME` (camera login username)
+- `CAMERA_PASSWORD` (camera login password)
+- `CAMERA_AUTH_MODE` (`digest`/`basic`/`none`, default `digest`)
 - `DB_PATH` (default `data/app.db`)
 - `ONEC_STUB_FILE` (default `onec_whitelist_stub.txt`)
 - `ONEC_SYNC_INTERVAL_HOURS` (default `24`)
@@ -56,6 +64,16 @@ Edit `backend/onec_whitelist_stub.txt` and keep one plate per line.
 - `MIN_AVG_CONFIDENCE` (default `0.80`)
 - `DRY_RUN_OPEN` (default `1`)
 - `ENABLE_FUZZY_MATCH` (default `0`)
+- `PREVIEW_ENABLED` (default `1`)
+- `PREVIEW_WRITE_INTERVAL_SEC` (default `3.0`)
+- `PREVIEW_JPEG_QUALITY` (default `85`)
+- `RECOGNITION_SNAPSHOT_ENABLED` (default `1`)
+- `RECOGNITION_SNAPSHOT_DIR` (default `data/recognized`)
+- `RECOGNITION_SNAPSHOT_JPEG_QUALITY` (default `90`)
+- `RECOGNITION_SNAPSHOT_MAX_FILES` (default `500`)
+
+When any detection frame is produced, backend saves an annotated snapshot with plate/decision overlay into `RECOGNITION_SNAPSHOT_DIR`.
+Dashboard table rows can open related event snapshot via backend endpoint `/api/events/{event_id}/image`.
 
 ## Safety Defaults
 

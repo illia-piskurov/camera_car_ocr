@@ -12,3 +12,4 @@ wheels/
 outputs
 samples
 backend/data/
+.env

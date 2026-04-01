@@ -2,11 +2,12 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 
-import { fetchDashboard, forceSync } from "@/lib/api"
-import type { DashboardData } from "@/lib/types"
+import { fetchDashboard, fetchPreview, forceSync, toPreviewImageSrc } from "@/lib/api"
+import type { DashboardData, PreviewData } from "@/lib/types"
 
 type UseDashboardState = {
     data: DashboardData | null
+    preview: PreviewData | null
     loading: boolean
     error: string | null
     refreshing: boolean
@@ -20,6 +21,7 @@ const STALE_MS = 12000
 export function useDashboard() {
     const [state, setState] = useState<UseDashboardState>({
         data: null,
+        preview: null,
         loading: true,
         error: null,
         refreshing: false,
@@ -34,10 +36,15 @@ export function useDashboard() {
 
         const controller = new AbortController()
         try {
-            const data = await fetchDashboard(controller.signal)
+            const [data, preview] = await Promise.all([
+                fetchDashboard(controller.signal),
+                fetchPreview(controller.signal).catch(() => null),
+            ])
+
             setState((prev) => ({
                 ...prev,
                 data,
+                preview,
                 loading: false,
                 refreshing: false,
                 error: null,
@@ -90,11 +97,13 @@ export function useDashboard() {
 
     const derived = useMemo(() => {
         const syncAgeSec = state.data?.sync.sync_age_seconds ?? null
+        const previewImageSrc = toPreviewImageSrc(state.preview)
         return {
             syncAgeSec,
+            previewImageSrc,
             hasData: Boolean(state.data),
         }
-    }, [state.data])
+    }, [state.data, state.preview])
 
     return {
         ...state,

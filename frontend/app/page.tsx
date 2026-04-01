@@ -1,8 +1,11 @@
 "use client"
 
+import { useState } from "react"
+
 import { RefreshCw, ShieldAlert, ShieldCheck, Siren, SquareDashedMousePointer } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
+import { toEventImageSrc } from "@/lib/api"
 import { useDashboard } from "@/hooks/use-dashboard"
 
 function formatTime(value: string | null | undefined) {
@@ -36,7 +39,13 @@ function formatSyncAge(seconds: number | null) {
 }
 
 export default function Page() {
-  const { data, loading, error, refreshing, isStale, syncAgeSec, refresh, runForceSync } = useDashboard()
+  const { data, preview, previewImageSrc, loading, error, refreshing, isStale, syncAgeSec, refresh, runForceSync } =
+    useDashboard()
+  const [selectedEventId, setSelectedEventId] = useState<number | null>(null)
+  const [selectedImageError, setSelectedImageError] = useState<string | null>(null)
+
+  const selectedEvent = data?.recent_events.find((event) => event.id === selectedEventId) ?? null
+  const selectedImageSrc = selectedEventId !== null ? toEventImageSrc(selectedEventId) : null
 
   return (
     <main className="min-h-svh bg-gradient-to-b from-slate-950 via-zinc-900 to-zinc-950 text-zinc-100">
@@ -136,7 +145,14 @@ export default function Page() {
                 </thead>
                 <tbody>
                   {data?.recent_events.map((event) => (
-                    <tr key={event.id} className="border-b border-zinc-900/70">
+                    <tr
+                      key={event.id}
+                      className="cursor-pointer border-b border-zinc-900/70 transition hover:bg-zinc-900/50"
+                      onClick={() => {
+                        setSelectedImageError(null)
+                        setSelectedEventId(event.id)
+                      }}
+                    >
                       <td className="py-2 pr-3 text-zinc-400">{formatTime(event.occurred_at)}</td>
                       <td className="py-2 pr-3 font-semibold tracking-wide">{event.plate || event.raw_plate}</td>
                       <td className="py-2 pr-3">
@@ -170,10 +186,35 @@ export default function Page() {
                 </tbody>
               </table>
             </div>
+
+            <p className="mt-3 text-xs text-zinc-500">Кликните на событие, чтобы открыть сохраненный кадр распознавания.</p>
           </article>
 
           <article className="ops-panel p-4">
             <h2 className="text-sm font-semibold uppercase tracking-wider text-zinc-300">Состояние интеграций</h2>
+
+            <div className="mt-3 rounded-lg border border-zinc-800 bg-zinc-950/70 p-3">
+              <p className="text-xs uppercase tracking-widest text-zinc-500">Live Preview</p>
+
+              <div className="mt-3 overflow-hidden rounded-md border border-zinc-800 bg-zinc-900/60">
+                {previewImageSrc ? (
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img src={previewImageSrc} alt="Последний кадр камеры" className="h-auto w-full object-cover" />
+                ) : (
+                  <div className="flex min-h-44 items-center justify-center px-3 text-center text-sm text-zinc-500">
+                    Кадр еще не готов. Запустите pipeline распознавания и подождите несколько секунд.
+                  </div>
+                )}
+              </div>
+
+              <div className="mt-3 space-y-2 text-xs text-zinc-400">
+                <p>Время кадра: {formatTime(preview?.captured_at)}</p>
+                <p>Детекции: {preview?.has_detections ? "есть" : "нет"}</p>
+                <p>Последний номер: {preview?.last_plate ?? "-"}</p>
+                <p>Последнее решение: {preview?.last_decision ?? "-"}</p>
+              </div>
+            </div>
+
             <div className="mt-3 space-y-3 text-sm">
               <div className="ops-kv">
                 <span>1С sync</span>
@@ -212,6 +253,42 @@ export default function Page() {
           </article>
         </section>
       </div>
+
+      {selectedEventId !== null && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 p-4">
+          <div className="w-full max-w-5xl rounded-xl border border-zinc-800 bg-zinc-950 p-4 shadow-2xl">
+            <div className="mb-3 flex items-center justify-between">
+              <div>
+                <p className="text-xs uppercase tracking-[0.18em] text-zinc-500">Снимок события</p>
+                <p className="mt-1 text-sm text-zinc-300">
+                  {selectedEvent
+                    ? `${formatTime(selectedEvent.occurred_at)} • ${selectedEvent.plate || selectedEvent.raw_plate} • ${selectedEvent.decision}`
+                    : "Событие"}
+                </p>
+              </div>
+              <Button variant="secondary" onClick={() => setSelectedEventId(null)}>
+                Закрыть
+              </Button>
+            </div>
+
+            <div className="overflow-hidden rounded-lg border border-zinc-800 bg-zinc-900/60">
+              {selectedImageSrc && !selectedImageError ? (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img
+                  src={selectedImageSrc}
+                  alt="Снимок события"
+                  className="h-auto max-h-[75vh] w-full object-contain"
+                  onError={() => setSelectedImageError("Снимок для этого события пока не найден")}
+                />
+              ) : (
+                <div className="flex min-h-64 items-center justify-center px-4 text-center text-sm text-zinc-400">
+                  {selectedImageError ?? "Снимок недоступен"}
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
     </main>
   )
 }

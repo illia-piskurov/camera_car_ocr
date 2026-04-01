@@ -130,7 +130,8 @@
   }
 
   .ops-panel {
-    @apply rounded-xl border border-zinc-800/80 bg-zinc-900/60 shadow-[inset_0_0_0_1px_rgba(255, _255, _255, _0.02)];
+    @apply rounded-xl border border-zinc-800/80 bg-zinc-900/60;
+    box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.02);
   }
 
   .ops-card {

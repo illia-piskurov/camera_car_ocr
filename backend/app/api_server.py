@@ -1,9 +1,13 @@
 from __future__ import annotations
 
+import glob
+import json
+import os
 from datetime import timedelta
 
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
 
 from .config import Settings
 from .db import Database, utc_now
@@ -25,9 +29,39 @@ app.add_middleware(
 )
 
 
+def _read_preview_meta() -> dict[str, object]:
+    if not os.path.exists(cfg.preview_meta_path):
+        return {}
+
+    try:
+        with open(cfg.preview_meta_path, "r", encoding="utf-8") as meta_file:
+            loaded = json.load(meta_file)
+        if isinstance(loaded, dict):
+            return loaded
+    except Exception:  # noqa: BLE001
+        return {}
+
+    return {}
+
+
+def _find_latest_snapshot_for_frame(frame_id: str) -> str | None:
+    pattern = os.path.join(cfg.recognition_snapshot_dir, f"*_{frame_id}_*.jpg")
+    matches = glob.glob(pattern)
+    if not matches:
+        return None
+
+    matches.sort(key=lambda path: os.path.getmtime(path), reverse=True)
+    return matches[0]
+
+
 @app.get("/health")
-def health() -> dict[str, str]:
-    return {"status": "ok"}
+def health() -> dict[str, object]:
+    db_ok = db.ping()
+    return {
+        "status": "ok" if db_ok else "degraded",
+        "service": "backend",
+        "db": "ok" if db_ok else "unreachable",
+    }
 
 
 @app.get("/api/dashboard")
@@ -89,3 +123,49 @@ def force_sync() -> dict[str, object]:
         "synced_count": synced,
         "last_sync_at": last_sync.isoformat() if last_sync else None,
     }
+
+
+@app.get("/api/preview")
+def preview_meta() -> dict[str, object]:
+    meta = _read_preview_meta()
+    available = os.path.exists(cfg.preview_image_path)
+    captured_at = meta.get("captured_at")
+
+    return {
+        "available": available,
+        "captured_at": captured_at if isinstance(captured_at, str) else None,
+        "has_detections": bool(meta.get("has_detections", False)),
+        "last_plate": meta.get("last_plate") if isinstance(meta.get("last_plate"), str) else None,
+        "last_decision": meta.get("last_decision") if isinstance(meta.get("last_decision"), str) else None,
+        "image_url": "/api/preview/image" if available else None,
+        "version": captured_at if isinstance(captured_at, str) else None,
+    }
+
+
+@app.get("/api/preview/image")
+def preview_image() -> FileResponse:
+    if not os.path.exists(cfg.preview_image_path):
+        raise HTTPException(status_code=404, detail="Preview image not available yet")
+
+    return FileResponse(
+        cfg.preview_image_path,
+        media_type="image/jpeg",
+        headers={"Cache-Control": "no-store, no-cache, must-revalidate, max-age=0"},
+    )
+
+
+@app.get("/api/events/{event_id}/image")
+def event_image(event_id: int) -> FileResponse:
+    frame_id = db.get_event_frame_id(event_id)
+    if frame_id is None:
+        raise HTTPException(status_code=404, detail="Event not found")
+
+    image_path = _find_latest_snapshot_for_frame(frame_id)
+    if image_path is None:
+        raise HTTPException(status_code=404, detail="Snapshot not available for this event")
+
+    return FileResponse(
+        image_path,
+        media_type="image/jpeg",
+        headers={"Cache-Control": "no-store, no-cache, must-revalidate, max-age=0"},
+    )

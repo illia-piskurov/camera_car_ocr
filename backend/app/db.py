@@ -3,7 +3,7 @@ from __future__ import annotations
 import os
 from datetime import datetime, timedelta, timezone
 
-from sqlalchemy import Boolean, DateTime, Float, Integer, String, create_engine, func, select
+from sqlalchemy import Boolean, DateTime, Float, Integer, String, create_engine, event, func, select, text
 from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column, sessionmaker
 
 
@@ -66,11 +66,33 @@ class RecognitionEvent(Base):
 class Database:
     def __init__(self, db_path: str) -> None:
         os.makedirs(os.path.dirname(db_path), exist_ok=True)
-        self.engine = create_engine(f"sqlite:///{db_path}", future=True)
+        self.engine = create_engine(
+            f"sqlite:///{db_path}",
+            future=True,
+            connect_args={"timeout": 15},
+        )
+        self._configure_sqlite_pragmas()
         self.SessionLocal = sessionmaker(bind=self.engine, expire_on_commit=False, class_=Session)
+
+    def _configure_sqlite_pragmas(self) -> None:
+        @event.listens_for(self.engine, "connect")
+        def _set_sqlite_pragmas(dbapi_connection, _connection_record) -> None:
+            cursor = dbapi_connection.cursor()
+            cursor.execute("PRAGMA journal_mode=WAL;")
+            cursor.execute("PRAGMA synchronous=NORMAL;")
+            cursor.execute("PRAGMA busy_timeout=15000;")
+            cursor.close()
 
     def init(self) -> None:
         Base.metadata.create_all(self.engine)
+
+    def ping(self) -> bool:
+        try:
+            with self.engine.connect() as conn:
+                conn.execute(text("SELECT 1"))
+            return True
+        except Exception:
+            return False
 
     def upsert_whitelist(self, normalized_plates: list[tuple[str, str]], source: str = "stub") -> int:
         with self.SessionLocal() as session:
@@ -241,3 +263,10 @@ class Database:
                     }
                 )
             return result
+
+    def get_event_frame_id(self, event_id: int) -> str | None:
+        with self.SessionLocal() as session:
+            row = session.get(RecognitionEvent, event_id)
+            if row is None:
+                return None
+            return row.frame_id

@@ -43,3 +43,13 @@ export type ForceSyncResult = {
     synced_count: number
     last_sync_at: string | null
 }
+
+export type PreviewData = {
+    available: boolean
+    captured_at: string | null
+    has_detections: boolean
+    last_plate: string | null
+    last_decision: string | null
+    image_url: string | null
+    version: string | null
+}

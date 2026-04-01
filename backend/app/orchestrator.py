@@ -1,8 +1,13 @@
 from __future__ import annotations
 
+import json
 import logging
+import os
+import re
 import time
 from datetime import datetime, timezone
+
+import cv2
 
 from .alpr_service import AlprService
 from .barrier import BarrierController
@@ -23,6 +28,126 @@ def _sync_whitelist(db: Database, provider: StubFileWhitelistProvider) -> None:
     LOG.info("Whitelist synced from stub: %s plates", count)
 
 
+def _write_preview_artifacts(
+    *,
+    image,
+    image_path: str,
+    meta_path: str,
+    captured_at: datetime,
+    has_detections: bool,
+    last_plate: str | None,
+    last_decision: str | None,
+    jpeg_quality: int,
+) -> None:
+    os.makedirs(os.path.dirname(image_path), exist_ok=True)
+    os.makedirs(os.path.dirname(meta_path), exist_ok=True)
+
+    quality = max(40, min(100, int(jpeg_quality)))
+    ok, encoded = cv2.imencode(".jpg", image, [int(cv2.IMWRITE_JPEG_QUALITY), quality])
+    if not ok:
+        raise RuntimeError("Failed to encode preview image")
+
+    with open(image_path, "wb") as image_file:
+        image_file.write(encoded.tobytes())
+
+    payload = {
+        "captured_at": captured_at.isoformat(),
+        "has_detections": has_detections,
+        "last_plate": last_plate,
+        "last_decision": last_decision,
+    }
+    with open(meta_path, "w", encoding="utf-8") as meta_file:
+        json.dump(payload, meta_file, ensure_ascii=False)
+
+
+def _safe_file_segment(value: str | None, fallback: str = "unknown") -> str:
+    raw = (value or "").strip()
+    if not raw:
+        return fallback
+
+    cleaned = re.sub(r"[^A-Za-z0-9_-]+", "_", raw).strip("_")
+    return cleaned if cleaned else fallback
+
+
+def _prune_old_snapshots(directory: str, max_files: int) -> None:
+    if max_files <= 0:
+        return
+
+    entries: list[tuple[float, str]] = []
+    for name in os.listdir(directory):
+        if not name.lower().endswith(".jpg"):
+            continue
+        path = os.path.join(directory, name)
+        try:
+            entries.append((os.path.getmtime(path), path))
+        except OSError:
+            continue
+
+    if len(entries) <= max_files:
+        return
+
+    entries.sort(key=lambda item: item[0])
+    for _, path in entries[: len(entries) - max_files]:
+        try:
+            os.remove(path)
+        except OSError:
+            continue
+
+
+def _write_recognition_snapshot(
+    *,
+    frame,
+    alpr: AlprService,
+    captured_at: datetime,
+    frame_id: str,
+    plate: str | None,
+    decision: str | None,
+    reason_code: str | None,
+    output_dir: str,
+    jpeg_quality: int,
+    max_files: int,
+) -> None:
+    os.makedirs(output_dir, exist_ok=True)
+
+    annotated = frame
+    try:
+        annotated, _ = alpr.draw_predictions(frame)
+    except Exception as exc:  # noqa: BLE001
+        LOG.warning("Snapshot draw_predictions failed, saving raw frame: %s", exc)
+
+    overlay = (
+        f"{captured_at.strftime('%Y-%m-%d %H:%M:%S')} | "
+        f"plate={plate or '-'} | decision={decision} | reason={reason_code or '-'}"
+    )
+    cv2.putText(
+        annotated,
+        overlay,
+        (12, 28),
+        cv2.FONT_HERSHEY_SIMPLEX,
+        0.7,
+        (0, 255, 255),
+        2,
+        cv2.LINE_AA,
+    )
+
+    quality = max(40, min(100, int(jpeg_quality)))
+    ok, encoded = cv2.imencode(".jpg", annotated, [int(cv2.IMWRITE_JPEG_QUALITY), quality])
+    if not ok:
+        raise RuntimeError("Failed to encode recognition snapshot")
+
+    timestamp = captured_at.strftime("%Y%m%d_%H%M%S_%f")
+    frame_part = _safe_file_segment(frame_id, fallback="frame")
+    plate_part = _safe_file_segment(plate)
+    decision_part = _safe_file_segment(decision, fallback="observed")
+    filename = f"{timestamp}_{frame_part}_{plate_part}_{decision_part}.jpg"
+    out_path = os.path.join(output_dir, filename)
+
+    with open(out_path, "wb") as out_file:
+        out_file.write(encoded.tobytes())
+
+    _prune_old_snapshots(output_dir, max_files=max_files)
+
+
 def run(settings: Settings | None = None) -> None:
     cfg = settings or Settings.from_env()
     logging.basicConfig(
@@ -41,6 +166,9 @@ def run(settings: Settings | None = None) -> None:
         url=cfg.camera_snapshot_url,
         timeout_sec=cfg.request_timeout_sec,
         retries=cfg.request_retries,
+        username=cfg.camera_username,
+        password=cfg.camera_password,
+        auth_mode=cfg.camera_auth_mode,
     )
     alpr = AlprService(detector_model=cfg.detector_model, ocr_model=cfg.ocr_model)
     voter = TemporalVoter(
@@ -55,6 +183,7 @@ def run(settings: Settings | None = None) -> None:
     barrier = BarrierController(dry_run=cfg.dry_run_open)
 
     LOG.info("Pipeline started. dry_run=%s", cfg.dry_run_open)
+    last_preview_write_ts = 0.0
 
     try:
         while True:
@@ -68,59 +197,110 @@ def run(settings: Settings | None = None) -> None:
 
             now = datetime.now(timezone.utc)
             detections = alpr.detect(frame, detected_at=now)
-            if not detections:
-                time.sleep(cfg.poll_interval_sec)
-                continue
 
-            for detection in detections:
-                db.record_event(
-                    occurred_at=detection.detected_at,
-                    frame_id=detection.frame_id,
-                    raw_plate=detection.raw_text,
-                    plate=detection.normalized_text,
-                    fuzzy_plate=detection.fuzzy_text,
-                    detection_confidence=detection.detection_confidence,
-                    ocr_confidence=detection.ocr_confidence,
-                    decision="observed",
-                    reason_code="raw_detection",
-                )
+            frame_last_decision: str | None = None
+            frame_last_plate: str | None = None
+            frame_last_reason: str | None = None
 
-                vote = voter.observe(detection)
-                if vote is None:
-                    continue
+            if detections:
+                for detection in detections:
+                    db.record_event(
+                        occurred_at=detection.detected_at,
+                        frame_id=detection.frame_id,
+                        raw_plate=detection.raw_text,
+                        plate=detection.normalized_text,
+                        fuzzy_plate=detection.fuzzy_text,
+                        detection_confidence=detection.detection_confidence,
+                        ocr_confidence=detection.ocr_confidence,
+                        decision="observed",
+                        reason_code="raw_detection",
+                    )
 
-                whitelisted = db.is_whitelisted(
-                    plate=vote.plate,
-                    fuzzy_plate=vote.fuzzy_plate,
-                    enable_fuzzy_match=cfg.enable_fuzzy_match,
-                )
-                decision = decider.evaluate(vote=vote, is_whitelisted=whitelisted, now=detection.detected_at)
+                    vote = voter.observe(detection)
+                    if vote is None:
+                        continue
 
-                db.record_event(
-                    occurred_at=detection.detected_at,
-                    frame_id=detection.frame_id,
-                    raw_plate=detection.raw_text,
-                    plate=vote.plate,
-                    fuzzy_plate=vote.fuzzy_plate,
-                    detection_confidence=detection.detection_confidence,
-                    ocr_confidence=detection.ocr_confidence,
-                    vote_confirmations=vote.confirmations,
-                    vote_avg_confidence=vote.avg_confidence,
-                    decision="open" if decision.should_open else "deny",
-                    reason_code=decision.reason_code,
-                )
+                    whitelisted = db.is_whitelisted(
+                        plate=vote.plate,
+                        fuzzy_plate=vote.fuzzy_plate,
+                        enable_fuzzy_match=cfg.enable_fuzzy_match,
+                    )
+                    decision = decider.evaluate(vote=vote, is_whitelisted=whitelisted, now=detection.detected_at)
+                    frame_last_decision = "open" if decision.should_open else "deny"
+                    frame_last_plate = vote.plate
+                    frame_last_reason = decision.reason_code
 
-                LOG.info(
-                    "Decision plate=%s confirmations=%s avg_conf=%.3f decision=%s reason=%s",
-                    vote.plate,
-                    vote.confirmations,
-                    vote.avg_confidence,
-                    "open" if decision.should_open else "deny",
-                    decision.reason_code,
-                )
+                    db.record_event(
+                        occurred_at=detection.detected_at,
+                        frame_id=detection.frame_id,
+                        raw_plate=detection.raw_text,
+                        plate=vote.plate,
+                        fuzzy_plate=vote.fuzzy_plate,
+                        detection_confidence=detection.detection_confidence,
+                        ocr_confidence=detection.ocr_confidence,
+                        vote_confirmations=vote.confirmations,
+                        vote_avg_confidence=vote.avg_confidence,
+                        decision=frame_last_decision,
+                        reason_code=decision.reason_code,
+                    )
 
-                if decision.should_open:
-                    barrier.open(vote.plate, decision.reason_code)
+                    LOG.info(
+                        "Decision plate=%s confirmations=%s avg_conf=%.3f decision=%s reason=%s",
+                        vote.plate,
+                        vote.confirmations,
+                        vote.avg_confidence,
+                        frame_last_decision,
+                        decision.reason_code,
+                    )
+
+                    if decision.should_open:
+                        barrier.open(vote.plate, decision.reason_code)
+
+            if (
+                cfg.recognition_snapshot_enabled
+                and detections
+            ):
+                try:
+                    primary_plate = frame_last_plate or detections[0].normalized_text or detections[0].raw_text
+                    _write_recognition_snapshot(
+                        frame=frame,
+                        alpr=alpr,
+                        captured_at=now,
+                        frame_id=detections[0].frame_id,
+                        plate=primary_plate,
+                        decision=frame_last_decision,
+                        reason_code=frame_last_reason or "raw_detection",
+                        output_dir=cfg.recognition_snapshot_dir,
+                        jpeg_quality=cfg.recognition_snapshot_jpeg_quality,
+                        max_files=cfg.recognition_snapshot_max_files,
+                    )
+                except Exception as exc:  # noqa: BLE001
+                    LOG.warning("Failed to save recognition snapshot: %s", exc)
+
+            if cfg.preview_enabled:
+                now_ts = time.monotonic()
+                if now_ts - last_preview_write_ts >= cfg.preview_write_interval_sec:
+                    last_preview_write_ts = now_ts
+
+                    annotated = frame
+                    preview_plates = [d.normalized_text for d in detections if d.normalized_text]
+                    try:
+                        annotated, draw_plates = alpr.draw_predictions(frame)
+                        if draw_plates:
+                            preview_plates = draw_plates
+                    except Exception as exc:  # noqa: BLE001
+                        LOG.warning("Preview draw_predictions failed, using raw frame: %s", exc)
+
+                    _write_preview_artifacts(
+                        image=annotated,
+                        image_path=cfg.preview_image_path,
+                        meta_path=cfg.preview_meta_path,
+                        captured_at=now,
+                        has_detections=bool(detections),
+                        last_plate=preview_plates[0] if preview_plates else None,
+                        last_decision=frame_last_decision,
+                        jpeg_quality=cfg.preview_jpeg_quality,
+                    )
 
             time.sleep(cfg.poll_interval_sec)
     except KeyboardInterrupt:
