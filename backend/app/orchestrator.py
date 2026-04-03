@@ -6,6 +6,7 @@ import os
 import re
 import time
 from datetime import datetime, timezone
+from uuid import uuid4
 
 import cv2
 
@@ -17,6 +18,7 @@ from .db import Database
 from .decision import BarrierDecisionEngine
 from .onec_provider import StubFileWhitelistProvider
 from .voting import TemporalVoter
+from .zones import crop_zone, draw_zones
 
 LOG = logging.getLogger(__name__)
 
@@ -103,9 +105,12 @@ def _write_recognition_snapshot(
     plate: str | None,
     decision: str | None,
     reason_code: str | None,
+    zone_name: str | None,
     output_dir: str,
     jpeg_quality: int,
     max_files: int,
+    zones: list[dict[str, object]] | None = None,
+    highlight_zone_id: int | None = None,
 ) -> None:
     os.makedirs(output_dir, exist_ok=True)
 
@@ -115,9 +120,12 @@ def _write_recognition_snapshot(
     except Exception as exc:  # noqa: BLE001
         LOG.warning("Snapshot draw_predictions failed, saving raw frame: %s", exc)
 
+    if zones is not None:
+        annotated = draw_zones(annotated, zones, highlight_zone_id=highlight_zone_id)
+
     overlay = (
         f"{captured_at.strftime('%Y-%m-%d %H:%M:%S')} | "
-        f"plate={plate or '-'} | decision={decision} | reason={reason_code or '-'}"
+        f"plate={plate or '-'} | zone={zone_name or 'full'} | decision={decision} | reason={reason_code or '-'}"
     )
     cv2.putText(
         annotated,
@@ -171,11 +179,7 @@ def run(settings: Settings | None = None) -> None:
         auth_mode=cfg.camera_auth_mode,
     )
     alpr = AlprService(detector_model=cfg.detector_model, ocr_model=cfg.ocr_model)
-    voter = TemporalVoter(
-        window_sec=cfg.voting_window_sec,
-        min_confirmations=cfg.min_confirmations,
-        min_avg_confidence=cfg.min_avg_confidence,
-    )
+    voters: dict[str, TemporalVoter] = {}
     decider = BarrierDecisionEngine(
         plate_cooldown_sec=cfg.plate_cooldown_sec,
         global_cooldown_sec=cfg.global_cooldown_sec,
@@ -196,11 +200,38 @@ def run(settings: Settings | None = None) -> None:
                 continue
 
             now = datetime.now(timezone.utc)
-            detections = alpr.detect(frame, detected_at=now)
+            frame_id = uuid4().hex
+            active_zones = db.get_zones(include_disabled=False)[:3]
+            active_zones_by_id: dict[int, dict[str, object]] = {
+                int(zone["id"]): zone for zone in active_zones if zone.get("id") is not None
+            }
+
+            detections = []
+            if active_zones:
+                for zone in active_zones:
+                    try:
+                        zone_frame = crop_zone(frame, zone)
+                    except Exception as exc:  # noqa: BLE001
+                        LOG.warning("Failed to crop zone %s: %s", zone.get("name"), exc)
+                        continue
+
+                    detections.extend(
+                        alpr.detect(
+                            zone_frame,
+                            detected_at=now,
+                            frame_id=frame_id,
+                            zone_id=int(zone.get("id")) if zone.get("id") is not None else None,
+                            zone_name=str(zone.get("name") or ""),
+                        )
+                    )
+            else:
+                detections = alpr.detect(frame, detected_at=now, frame_id=frame_id)
 
             frame_last_decision: str | None = None
             frame_last_plate: str | None = None
             frame_last_reason: str | None = None
+            frame_last_zone: str | None = None
+            snapshot_source_detection = detections[0] if detections else None
 
             if detections:
                 for detection in detections:
@@ -212,9 +243,21 @@ def run(settings: Settings | None = None) -> None:
                         fuzzy_plate=detection.fuzzy_text,
                         detection_confidence=detection.detection_confidence,
                         ocr_confidence=detection.ocr_confidence,
+                        zone_id=detection.zone_id,
+                        zone_name=detection.zone_name,
                         decision="observed",
                         reason_code="raw_detection",
                     )
+
+                    voter_key = f"zone:{detection.zone_id}" if detection.zone_id is not None else "full"
+                    voter = voters.get(voter_key)
+                    if voter is None:
+                        voter = TemporalVoter(
+                            window_sec=cfg.voting_window_sec,
+                            min_confirmations=cfg.min_confirmations,
+                            min_avg_confidence=cfg.min_avg_confidence,
+                        )
+                        voters[voter_key] = voter
 
                     vote = voter.observe(detection)
                     if vote is None:
@@ -229,6 +272,8 @@ def run(settings: Settings | None = None) -> None:
                     frame_last_decision = "open" if decision.should_open else "deny"
                     frame_last_plate = vote.plate
                     frame_last_reason = decision.reason_code
+                    frame_last_zone = detection.zone_name
+                    snapshot_source_detection = detection
 
                     db.record_event(
                         occurred_at=detection.detected_at,
@@ -240,6 +285,8 @@ def run(settings: Settings | None = None) -> None:
                         ocr_confidence=detection.ocr_confidence,
                         vote_confirmations=vote.confirmations,
                         vote_avg_confidence=vote.avg_confidence,
+                        zone_id=detection.zone_id,
+                        zone_name=detection.zone_name,
                         decision=frame_last_decision,
                         reason_code=decision.reason_code,
                     )
@@ -261,15 +308,27 @@ def run(settings: Settings | None = None) -> None:
                 and detections
             ):
                 try:
-                    primary_plate = frame_last_plate or detections[0].normalized_text or detections[0].raw_text
+                    detection_for_snapshot = snapshot_source_detection or detections[0]
+                    selected_zone = None
+                    if detection_for_snapshot.zone_id is not None:
+                        selected_zone = active_zones_by_id.get(detection_for_snapshot.zone_id)
+
+                    primary_plate = (
+                        frame_last_plate
+                        or detection_for_snapshot.normalized_text
+                        or detection_for_snapshot.raw_text
+                    )
                     _write_recognition_snapshot(
                         frame=frame,
                         alpr=alpr,
                         captured_at=now,
-                        frame_id=detections[0].frame_id,
+                        frame_id=detection_for_snapshot.frame_id,
                         plate=primary_plate,
                         decision=frame_last_decision,
                         reason_code=frame_last_reason or "raw_detection",
+                        zone_name=detection_for_snapshot.zone_name,
+                        zones=active_zones,
+                        highlight_zone_id=detection_for_snapshot.zone_id,
                         output_dir=cfg.recognition_snapshot_dir,
                         jpeg_quality=cfg.recognition_snapshot_jpeg_quality,
                         max_files=cfg.recognition_snapshot_max_files,
@@ -290,6 +349,9 @@ def run(settings: Settings | None = None) -> None:
                             preview_plates = draw_plates
                     except Exception as exc:  # noqa: BLE001
                         LOG.warning("Preview draw_predictions failed, using raw frame: %s", exc)
+
+                    if active_zones:
+                        annotated = draw_zones(annotated, active_zones)
 
                     _write_preview_artifacts(
                         image=annotated,

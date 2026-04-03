@@ -8,10 +8,12 @@ from datetime import timedelta
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
+from pydantic import BaseModel, Field
 
 from .config import Settings
 from .db import Database, utc_now
 from .onec_provider import StubFileWhitelistProvider
+from .zones import sanitize_zone
 
 cfg = Settings.from_env()
 db = Database(cfg.db_path)
@@ -27,6 +29,21 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+class ZoneInput(BaseModel):
+    id: int | None = None
+    name: str | None = None
+    x_min: float = Field(ge=0.0, le=1.0)
+    y_min: float = Field(ge=0.0, le=1.0)
+    x_max: float = Field(ge=0.0, le=1.0)
+    y_max: float = Field(ge=0.0, le=1.0)
+    is_enabled: bool = True
+    sort_order: int = 0
+
+
+class ZonesPayload(BaseModel):
+    zones: list[ZoneInput] = Field(default_factory=list)
 
 
 def _read_preview_meta() -> dict[str, object]:
@@ -111,6 +128,34 @@ def dashboard() -> dict[str, object]:
     }
 
 
+@app.get("/api/zones")
+def get_zones() -> dict[str, object]:
+    return {
+        "max_zones": cfg.detection_zones_max,
+        "zones": db.get_zones(include_disabled=True),
+    }
+
+
+@app.put("/api/zones")
+def put_zones(payload: ZonesPayload) -> dict[str, object]:
+    if len(payload.zones) > cfg.detection_zones_max:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Maximum {cfg.detection_zones_max} zones are allowed",
+        )
+
+    sanitized = [
+        sanitize_zone(zone.model_dump(), default_name=f"Zone {index + 1}")
+        for index, zone in enumerate(payload.zones)
+    ]
+    saved = db.replace_zones(sanitized, max_zones=cfg.detection_zones_max)
+    return {
+        "status": "ok",
+        "max_zones": cfg.detection_zones_max,
+        "zones": saved,
+    }
+
+
 @app.post("/api/sync/force")
 def force_sync() -> dict[str, object]:
     rows = provider.full_sync()
@@ -137,6 +182,8 @@ def preview_meta() -> dict[str, object]:
         "has_detections": bool(meta.get("has_detections", False)),
         "last_plate": meta.get("last_plate") if isinstance(meta.get("last_plate"), str) else None,
         "last_decision": meta.get("last_decision") if isinstance(meta.get("last_decision"), str) else None,
+        "zones": db.get_zones(include_disabled=True),
+        "max_zones": cfg.detection_zones_max,
         "image_url": "/api/preview/image" if available else None,
         "version": captured_at if isinstance(captured_at, str) else None,
     }

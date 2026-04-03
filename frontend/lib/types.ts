@@ -1,3 +1,14 @@
+export type DetectionZone = {
+    id: number
+    name: string
+    x_min: number
+    y_min: number
+    x_max: number
+    y_max: number
+    is_enabled: boolean
+    sort_order: number
+}
+
 export type DashboardEvent = {
     id: number
     occurred_at: string
@@ -10,6 +21,8 @@ export type DashboardEvent = {
     ocr_confidence: number
     vote_confirmations: number | null
     vote_avg_confidence: number | null
+    zone_id: number | null
+    zone_name: string | null
 }
 
 export type DashboardData = {
@@ -50,6 +63,17 @@ export type PreviewData = {
     has_detections: boolean
     last_plate: string | null
     last_decision: string | null
+    zones: DetectionZone[]
+    max_zones: number
     image_url: string | null
     version: string | null
+}
+
+export type ZonesResponse = {
+    max_zones: number
+    zones: DetectionZone[]
+}
+
+export type SaveZonesResponse = ZonesResponse & {
+    status: string
 }

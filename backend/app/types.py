@@ -13,6 +13,8 @@ class PlateDetection:
     fuzzy_text: str
     detection_confidence: float
     ocr_confidence: float
+    zone_id: int | None = None
+    zone_name: str | None = None
 
     @property
     def combined_confidence(self) -> float:

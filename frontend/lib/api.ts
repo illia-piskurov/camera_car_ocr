@@ -1,4 +1,4 @@
-import type { DashboardData, ForceSyncResult, PreviewData } from "@/lib/types"
+import type { DashboardData, ForceSyncResult, PreviewData, SaveZonesResponse, ZonesResponse } from "@/lib/types"
 
 const API_BASE = process.env.NEXT_PUBLIC_BACKEND_API_BASE ?? "http://127.0.0.1:8000"
 
@@ -41,6 +41,37 @@ export async function fetchPreview(signal?: AbortSignal): Promise<PreviewData> {
     }
 
     return (await response.json()) as PreviewData
+}
+
+export async function fetchZones(signal?: AbortSignal): Promise<ZonesResponse> {
+    const response = await fetch(`${API_BASE}/api/zones`, {
+        method: "GET",
+        cache: "no-store",
+        signal,
+    })
+
+    if (!response.ok) {
+        throw new Error(`Zones request failed: ${response.status}`)
+    }
+
+    return (await response.json()) as ZonesResponse
+}
+
+export async function saveZones(zones: ZonesResponse["zones"]): Promise<SaveZonesResponse> {
+    const response = await fetch(`${API_BASE}/api/zones`, {
+        method: "PUT",
+        cache: "no-store",
+        headers: {
+            "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ zones }),
+    })
+
+    if (!response.ok) {
+        throw new Error(`Save zones failed: ${response.status}`)
+    }
+
+    return (await response.json()) as SaveZonesResponse
 }
 
 export function toPreviewImageSrc(preview: PreviewData | null): string | null {
