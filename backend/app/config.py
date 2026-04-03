@@ -2,6 +2,52 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass
+from pathlib import Path
+
+
+def _parse_env_line(line: str) -> tuple[str, str] | None:
+    stripped = line.strip()
+    if not stripped or stripped.startswith("#") or "=" not in stripped:
+        return None
+
+    key, value = stripped.split("=", 1)
+    key = key.strip()
+    value = value.strip()
+
+    if not key:
+        return None
+
+    if (value.startswith('"') and value.endswith('"')) or (
+        value.startswith("'") and value.endswith("'")
+    ):
+        value = value[1:-1]
+
+    return key, value
+
+
+def _load_env_file_if_exists(path: Path) -> None:
+    if not path.exists() or not path.is_file():
+        return
+
+    try:
+        for line in path.read_text(encoding="utf-8").splitlines():
+            parsed = _parse_env_line(line)
+            if parsed is None:
+                continue
+            key, value = parsed
+            os.environ.setdefault(key, value)
+    except OSError:
+        return
+
+
+def _load_local_env_files() -> None:
+    # Support local runs from backend/ while keeping repo-root .env as source of truth.
+    current_file = Path(__file__).resolve()
+    backend_dir = current_file.parents[1]
+    repo_root = current_file.parents[2]
+
+    _load_env_file_if_exists(backend_dir / ".env")
+    _load_env_file_if_exists(repo_root / ".env")
 
 
 @dataclass(frozen=True)
@@ -44,6 +90,7 @@ class Settings:
 
     @staticmethod
     def from_env() -> "Settings":
+        _load_local_env_files()
         return Settings(
             camera_snapshot_url=os.getenv("CAMERA_SNAPSHOT_URL", Settings.camera_snapshot_url),
             camera_username=os.getenv("CAMERA_USERNAME", Settings.camera_username),
