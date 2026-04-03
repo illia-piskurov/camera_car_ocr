@@ -40,6 +40,7 @@ class Settings:
     recognition_snapshot_dir: str = "data/recognized"
     recognition_snapshot_jpeg_quality: int = 90
     recognition_snapshot_max_files: int = 500
+    detection_zones_max: int = 3
 
     @staticmethod
     def from_env() -> "Settings":
@@ -85,4 +86,5 @@ class Settings:
             recognition_snapshot_max_files=int(
                 os.getenv("RECOGNITION_SNAPSHOT_MAX_FILES", Settings.recognition_snapshot_max_files)
             ),
+            detection_zones_max=int(os.getenv("DETECTION_ZONES_MAX", Settings.detection_zones_max)),
         )

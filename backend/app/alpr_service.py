@@ -36,9 +36,16 @@ class AlprService:
 
         return annotated, plates
 
-    def detect(self, frame: np.ndarray, detected_at: datetime | None = None) -> list[PlateDetection]:
+    def detect(
+        self,
+        frame: np.ndarray,
+        detected_at: datetime | None = None,
+        frame_id: str | None = None,
+        zone_id: int | None = None,
+        zone_name: str | None = None,
+    ) -> list[PlateDetection]:
         when = detected_at or datetime.now(timezone.utc)
-        frame_id = uuid4().hex
+        effective_frame_id = frame_id or uuid4().hex
         results: list[Any] = self.alpr.predict(frame)
         detections: list[PlateDetection] = []
 
@@ -61,13 +68,15 @@ class AlprService:
 
             detections.append(
                 PlateDetection(
-                    frame_id=frame_id,
+                    frame_id=effective_frame_id,
                     detected_at=when,
                     raw_text=raw_text,
                     normalized_text=plate.normalized,
                     fuzzy_text=plate.fuzzy,
                     detection_confidence=float(getattr(getattr(item, "detection", None), "confidence", 0.0)),
                     ocr_confidence=float(ocr_conf),
+                    zone_id=zone_id,
+                    zone_name=zone_name,
                 )
             )
 

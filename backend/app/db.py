@@ -46,6 +46,20 @@ class SyncState(Base):
     last_full_sync_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
+class DetectionZone(Base):
+    __tablename__ = "detection_zones"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    name: Mapped[str] = mapped_column(String(64))
+    x_min: Mapped[float] = mapped_column(Float)
+    y_min: Mapped[float] = mapped_column(Float)
+    x_max: Mapped[float] = mapped_column(Float)
+    y_max: Mapped[float] = mapped_column(Float)
+    is_enabled: Mapped[bool] = mapped_column(Boolean, default=True, index=True)
+    sort_order: Mapped[int] = mapped_column(Integer, default=0)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+
+
 class RecognitionEvent(Base):
     __tablename__ = "recognition_events"
 
@@ -59,6 +73,8 @@ class RecognitionEvent(Base):
     ocr_confidence: Mapped[float] = mapped_column(Float)
     vote_confirmations: Mapped[int | None] = mapped_column(Integer, nullable=True)
     vote_avg_confidence: Mapped[float | None] = mapped_column(Float, nullable=True)
+    zone_id: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)
+    zone_name: Mapped[str | None] = mapped_column(String(64), nullable=True)
     decision: Mapped[str] = mapped_column(String(32), index=True)
     reason_code: Mapped[str] = mapped_column(String(64))
 
@@ -85,6 +101,33 @@ class Database:
 
     def init(self) -> None:
         Base.metadata.create_all(self.engine)
+        self._ensure_runtime_migrations()
+
+    def _table_columns(self, table_name: str) -> set[str]:
+        with self.engine.connect() as conn:
+            rows = conn.execute(text(f"PRAGMA table_info({table_name})")).all()
+        return {str(row[1]) for row in rows}
+
+    def _add_column_if_missing(self, table_name: str, column_name: str, ddl: str) -> None:
+        columns = self._table_columns(table_name)
+        if column_name in columns:
+            return
+
+        with self.engine.begin() as conn:
+            conn.execute(text(f"ALTER TABLE {table_name} ADD COLUMN {ddl}"))
+
+    def _ensure_runtime_migrations(self) -> None:
+        # Lightweight idempotent migrations for existing SQLite DBs.
+        self._add_column_if_missing(
+            "recognition_events",
+            "zone_id",
+            "zone_id INTEGER",
+        )
+        self._add_column_if_missing(
+            "recognition_events",
+            "zone_name",
+            "zone_name VARCHAR(64)",
+        )
 
     def ping(self) -> bool:
         try:
@@ -162,6 +205,8 @@ class Database:
         reason_code: str,
         vote_confirmations: int | None = None,
         vote_avg_confidence: float | None = None,
+        zone_id: int | None = None,
+        zone_name: str | None = None,
     ) -> None:
         with self.SessionLocal() as session:
             session.add(
@@ -175,11 +220,57 @@ class Database:
                     ocr_confidence=ocr_confidence,
                     vote_confirmations=vote_confirmations,
                     vote_avg_confidence=vote_avg_confidence,
+                    zone_id=zone_id,
+                    zone_name=zone_name,
                     decision=decision,
                     reason_code=reason_code,
                 )
             )
             session.commit()
+
+    def replace_zones(self, zones: list[dict[str, object]], max_zones: int = 3) -> list[dict[str, object]]:
+        limited = zones[: max(0, max_zones)]
+        with self.SessionLocal() as session:
+            session.query(DetectionZone).delete()
+
+            for index, zone in enumerate(limited):
+                session.add(
+                    DetectionZone(
+                        name=str(zone.get("name") or f"Zone {index + 1}"),
+                        x_min=float(zone.get("x_min", 0.0)),
+                        y_min=float(zone.get("y_min", 0.0)),
+                        x_max=float(zone.get("x_max", 1.0)),
+                        y_max=float(zone.get("y_max", 1.0)),
+                        is_enabled=bool(zone.get("is_enabled", True)),
+                        sort_order=int(zone.get("sort_order", index)),
+                        updated_at=utc_now(),
+                    )
+                )
+
+            session.commit()
+
+        return self.get_zones(include_disabled=True)
+
+    def get_zones(self, include_disabled: bool = False) -> list[dict[str, object]]:
+        with self.SessionLocal() as session:
+            stmt = select(DetectionZone).order_by(DetectionZone.sort_order.asc(), DetectionZone.id.asc())
+            if not include_disabled:
+                stmt = stmt.where(DetectionZone.is_enabled.is_(True))
+
+            rows = session.execute(stmt).scalars().all()
+            return [
+                {
+                    "id": row.id,
+                    "name": row.name,
+                    "x_min": float(row.x_min),
+                    "y_min": float(row.y_min),
+                    "x_max": float(row.x_max),
+                    "y_max": float(row.y_max),
+                    "is_enabled": bool(row.is_enabled),
+                    "sort_order": int(row.sort_order),
+                }
+                for row in rows
+            ]
 
     def set_last_sync_now(self) -> None:
         with self.SessionLocal() as session:
@@ -260,6 +351,8 @@ class Database:
                         "ocr_confidence": row.ocr_confidence,
                         "vote_confirmations": row.vote_confirmations,
                         "vote_avg_confidence": row.vote_avg_confidence,
+                        "zone_id": row.zone_id,
+                        "zone_name": row.zone_name,
                     }
                 )
             return result

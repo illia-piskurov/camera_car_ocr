@@ -1,12 +1,14 @@
 "use client"
 
-import { useState } from "react"
+import { useEffect, useState } from "react"
 
 import { RefreshCw, ShieldAlert, ShieldCheck, Siren, SquareDashedMousePointer } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
-import { toEventImageSrc } from "@/lib/api"
+import { ZoneEditor } from "@/components/zone-editor"
+import { saveZones, toEventImageSrc } from "@/lib/api"
 import { useDashboard } from "@/hooks/use-dashboard"
+import type { DetectionZone } from "@/lib/types"
 
 function formatTime(value: string | null | undefined) {
   if (!value) {
@@ -43,9 +45,35 @@ export default function Page() {
     useDashboard()
   const [selectedEventId, setSelectedEventId] = useState<number | null>(null)
   const [selectedImageError, setSelectedImageError] = useState<string | null>(null)
+  const [zoneDraft, setZoneDraft] = useState<DetectionZone[]>([])
+  const [zonesDirty, setZonesDirty] = useState(false)
+  const [zonesSaving, setZonesSaving] = useState(false)
+  const [zonesMessage, setZonesMessage] = useState<string | null>(null)
+
+  useEffect(() => {
+    if (!zonesDirty && preview?.zones) {
+      setZoneDraft(preview.zones)
+    }
+  }, [preview, zonesDirty])
 
   const selectedEvent = data?.recent_events.find((event) => event.id === selectedEventId) ?? null
   const selectedImageSrc = selectedEventId !== null ? toEventImageSrc(selectedEventId) : null
+  const maxZones = preview?.max_zones ?? 3
+
+  async function handleSaveZones() {
+    setZonesSaving(true)
+    setZonesMessage(null)
+    try {
+      await saveZones(zoneDraft)
+      setZonesDirty(false)
+      setZonesMessage("Зоны сохранены")
+      await refresh()
+    } catch (saveError) {
+      setZonesMessage(saveError instanceof Error ? saveError.message : "Ошибка сохранения зон")
+    } finally {
+      setZonesSaving(false)
+    }
+  }
 
   return (
     <main className="min-h-svh bg-gradient-to-b from-slate-950 via-zinc-900 to-zinc-950 text-zinc-100">
@@ -137,6 +165,7 @@ export default function Page() {
                   <tr className="border-b border-zinc-800 text-left text-xs uppercase tracking-wider text-zinc-500">
                     <th className="py-2 pr-3">Время</th>
                     <th className="py-2 pr-3">Номер</th>
+                    <th className="py-2 pr-3">Зона</th>
                     <th className="py-2 pr-3">Решение</th>
                     <th className="py-2 pr-3">Причина</th>
                     <th className="py-2 pr-3">OCR</th>
@@ -155,6 +184,7 @@ export default function Page() {
                     >
                       <td className="py-2 pr-3 text-zinc-400">{formatTime(event.occurred_at)}</td>
                       <td className="py-2 pr-3 font-semibold tracking-wide">{event.plate || event.raw_plate}</td>
+                      <td className="py-2 pr-3 text-zinc-300">{event.zone_name ?? "full"}</td>
                       <td className="py-2 pr-3">
                         <span
                           className={
@@ -178,7 +208,7 @@ export default function Page() {
                   ))}
                   {!loading && !data?.recent_events.length && (
                     <tr>
-                      <td colSpan={6} className="py-8 text-center text-zinc-500">
+                      <td colSpan={7} className="py-8 text-center text-zinc-500">
                         Пока нет событий. Запустите backend pipeline и дождитесь первых распознаваний.
                       </td>
                     </tr>
@@ -205,6 +235,38 @@ export default function Page() {
                     Кадр еще не готов. Запустите pipeline распознавания и подождите несколько секунд.
                   </div>
                 )}
+              </div>
+
+              <div className="mt-3 rounded-md border border-zinc-800 bg-zinc-950/60 p-3">
+                <p className="mb-2 text-xs uppercase tracking-widest text-zinc-500">Зоны распознавания</p>
+                <ZoneEditor
+                  imageSrc={previewImageSrc}
+                  zones={zoneDraft}
+                  maxZones={maxZones}
+                  onChangeZones={(zones) => {
+                    setZoneDraft(zones)
+                    setZonesDirty(true)
+                    setZonesMessage(null)
+                  }}
+                />
+
+                <div className="mt-3 flex flex-wrap gap-2">
+                  <Button onClick={() => void handleSaveZones()} disabled={!zonesDirty || zonesSaving}>
+                    {zonesSaving ? "Сохраняем..." : "Сохранить зоны"}
+                  </Button>
+                  <Button
+                    variant="secondary"
+                    onClick={() => {
+                      setZoneDraft(preview?.zones ?? [])
+                      setZonesDirty(false)
+                      setZonesMessage(null)
+                    }}
+                    disabled={zonesSaving}
+                  >
+                    Сбросить
+                  </Button>
+                  {zonesMessage && <p className="self-center text-xs text-zinc-400">{zonesMessage}</p>}
+                </div>
               </div>
 
               <div className="mt-3 space-y-2 text-xs text-zinc-400">
