@@ -17,6 +17,7 @@ from .camera import SnapshotCameraClient
 from .config import Settings
 from .db import Database
 from .decision import BarrierDecisionEngine
+from .motion_detector import has_motion, has_motion_in_zone
 from .onec_provider import StubFileWhitelistProvider
 from .voting import TemporalVoter
 from .zones import crop_zone, draw_zones, paste_zone_image
@@ -191,6 +192,7 @@ def run(settings: Settings | None = None) -> None:
 
     LOG.info("Pipeline started. dry_run=%s", cfg.dry_run_open)
     last_preview_write_ts = 0.0
+    prev_frame: np.ndarray | None = None
 
     try:
         while True:
@@ -202,9 +204,54 @@ def run(settings: Settings | None = None) -> None:
                 time.sleep(cfg.poll_interval_sec)
                 continue
 
-            now = datetime.now(timezone.utc)
-            frame_id = uuid4().hex
-            active_zones = db.get_zones(include_disabled=False)[:3]
+            # Motion-gated ALPR: skip expensive inference if no motion detected
+            if cfg.motion_detection_enabled and prev_frame is not None:
+                now = datetime.now(timezone.utc)
+                frame_id = uuid4().hex
+                active_zones = db.get_zones(include_disabled=False)[:3]
+
+                if active_zones:
+                    # Per-zone motion check: only process zones with motion
+                    zones_with_motion = []
+                    for zone in active_zones:
+                        if has_motion_in_zone(
+                            prev_frame,
+                            frame,
+                            zone,
+                            threshold=cfg.motion_threshold_percent,
+                            blur_kernel=cfg.motion_blur_kernel,
+                        ):
+                            zones_with_motion.append(zone)
+
+                    if not zones_with_motion:
+                        # No motion in any zone, skip ALPR this frame
+                        LOG.debug("No motion in any zone, skipping ALPR")
+                        prev_frame = frame
+                        time.sleep(cfg.poll_interval_sec)
+                        continue
+
+                    # Filter to only zones with motion
+                    active_zones = zones_with_motion
+                else:
+                    # Full-frame motion check
+                    if not has_motion(
+                        prev_frame,
+                        frame,
+                        threshold=cfg.motion_threshold_percent,
+                        blur_kernel=cfg.motion_blur_kernel,
+                    ):
+                        # No motion in full frame, skip ALPR this frame
+                        LOG.debug("No motion in full frame, skipping ALPR")
+                        prev_frame = frame
+                        time.sleep(cfg.poll_interval_sec)
+                        continue
+
+            else:
+                # Motion detection disabled or first frame: initialize normally
+                now = datetime.now(timezone.utc)
+                frame_id = uuid4().hex
+                active_zones = db.get_zones(include_disabled=False)[:3]
+
             active_zones_by_id: dict[int, dict[str, object]] = {
                 int(zone["id"]): zone for zone in active_zones if zone.get("id") is not None
             }
@@ -388,6 +435,7 @@ def run(settings: Settings | None = None) -> None:
                         jpeg_quality=cfg.preview_jpeg_quality,
                     )
 
+            prev_frame = frame
             time.sleep(cfg.poll_interval_sec)
     except KeyboardInterrupt:
         LOG.info("Pipeline interrupted by user")
