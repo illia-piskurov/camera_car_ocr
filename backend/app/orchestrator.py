@@ -9,6 +9,7 @@ from datetime import datetime, timezone
 from uuid import uuid4
 
 import cv2
+import numpy as np
 
 from .alpr_service import AlprService
 from .barrier import BarrierController
@@ -18,7 +19,7 @@ from .db import Database
 from .decision import BarrierDecisionEngine
 from .onec_provider import StubFileWhitelistProvider
 from .voting import TemporalVoter
-from .zones import crop_zone, draw_zones
+from .zones import crop_zone, draw_zones, paste_zone_image
 
 LOG = logging.getLogger(__name__)
 
@@ -111,14 +112,16 @@ def _write_recognition_snapshot(
     max_files: int,
     zones: list[dict[str, object]] | None = None,
     highlight_zone_id: int | None = None,
+    apply_alpr_predictions: bool = True,
 ) -> None:
     os.makedirs(output_dir, exist_ok=True)
 
     annotated = frame
-    try:
-        annotated, _ = alpr.draw_predictions(frame)
-    except Exception as exc:  # noqa: BLE001
-        LOG.warning("Snapshot draw_predictions failed, saving raw frame: %s", exc)
+    if apply_alpr_predictions:
+        try:
+            annotated, _ = alpr.draw_predictions(frame)
+        except Exception as exc:  # noqa: BLE001
+            LOG.warning("Snapshot draw_predictions failed, saving raw frame: %s", exc)
 
     if zones is not None:
         annotated = draw_zones(annotated, zones, highlight_zone_id=highlight_zone_id)
@@ -207,6 +210,7 @@ def run(settings: Settings | None = None) -> None:
             }
 
             detections = []
+            zone_frames: dict[int, np.ndarray] = {}
             if active_zones:
                 for zone in active_zones:
                     try:
@@ -215,12 +219,16 @@ def run(settings: Settings | None = None) -> None:
                         LOG.warning("Failed to crop zone %s: %s", zone.get("name"), exc)
                         continue
 
+                    zone_id = int(zone.get("id")) if zone.get("id") is not None else None
+                    if zone_id is not None:
+                        zone_frames[zone_id] = zone_frame
+
                     detections.extend(
                         alpr.detect(
                             zone_frame,
                             detected_at=now,
                             frame_id=frame_id,
-                            zone_id=int(zone.get("id")) if zone.get("id") is not None else None,
+                            zone_id=zone_id,
                             zone_name=str(zone.get("name") or ""),
                         )
                     )
@@ -318,8 +326,23 @@ def run(settings: Settings | None = None) -> None:
                         or detection_for_snapshot.normalized_text
                         or detection_for_snapshot.raw_text
                     )
+
+                    snapshot_frame = frame
+                    apply_alpr_predictions = True
+                    if selected_zone is not None:
+                        zone_image = zone_frames.get(detection_for_snapshot.zone_id or -1)
+                        if zone_image is None:
+                            zone_image = crop_zone(frame, selected_zone)
+
+                        try:
+                            annotated_zone_image, _ = alpr.draw_predictions(zone_image)
+                            snapshot_frame = paste_zone_image(snapshot_frame, selected_zone, annotated_zone_image)
+                            apply_alpr_predictions = False
+                        except Exception as exc:  # noqa: BLE001
+                            LOG.warning("Failed to annotate zone snapshot, falling back to full-frame snapshot: %s", exc)
+
                     _write_recognition_snapshot(
-                        frame=frame,
+                        frame=snapshot_frame,
                         alpr=alpr,
                         captured_at=now,
                         frame_id=detection_for_snapshot.frame_id,
@@ -329,6 +352,7 @@ def run(settings: Settings | None = None) -> None:
                         zone_name=detection_for_snapshot.zone_name,
                         zones=active_zones,
                         highlight_zone_id=detection_for_snapshot.zone_id,
+                        apply_alpr_predictions=apply_alpr_predictions,
                         output_dir=cfg.recognition_snapshot_dir,
                         jpeg_quality=cfg.recognition_snapshot_jpeg_quality,
                         max_files=cfg.recognition_snapshot_max_files,

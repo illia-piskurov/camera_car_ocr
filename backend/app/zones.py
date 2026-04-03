@@ -88,6 +88,24 @@ def crop_zone(frame: np.ndarray, zone: dict[str, object]) -> np.ndarray:
     return frame[top:bottom, left:right]
 
 
+def paste_zone_image(
+    image: np.ndarray,
+    zone: dict[str, object],
+    zone_image: np.ndarray,
+) -> np.ndarray:
+    h, w = image.shape[:2]
+    left, top, right, bottom = zone_to_pixels(zone, w, h)
+    target_width = right - left
+    target_height = bottom - top
+
+    if zone_image.shape[1] != target_width or zone_image.shape[0] != target_height:
+        zone_image = cv2.resize(zone_image, (target_width, target_height), interpolation=cv2.INTER_LINEAR)
+
+    result = image.copy()
+    result[top:bottom, left:right] = zone_image
+    return result
+
+
 def draw_zones(
     image: np.ndarray,
     zones: list[dict[str, object]],
