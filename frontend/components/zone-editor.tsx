@@ -144,7 +144,7 @@ export function ZoneEditor({ imageSrc, zones, maxZones, onChangeZones }: ZoneEdi
                     onClick={() => setDrawEnabled(true)}
                     disabled={!canAddZone}
                 >
-                    Добавить зону
+                    Add Zone
                 </button>
                 <button
                     type="button"
@@ -152,10 +152,10 @@ export function ZoneEditor({ imageSrc, zones, maxZones, onChangeZones }: ZoneEdi
                     onClick={clearZones}
                     disabled={!zones.length}
                 >
-                    Очистить
+                    Clear
                 </button>
                 <p className="self-center text-xs text-zinc-500">
-                    {zones.length}/{maxZones} зон
+                    {zones.length}/{maxZones} zones
                 </p>
             </div>
 
@@ -204,7 +204,7 @@ export function ZoneEditor({ imageSrc, zones, maxZones, onChangeZones }: ZoneEdi
                     </div>
                 ) : (
                     <div className="flex min-h-44 items-center justify-center px-3 text-center text-sm text-zinc-500">
-                        Кадр еще не готов. Дождитесь live preview.
+                        Frame is not ready yet. Wait for the live preview.
                     </div>
                 )}
             </div>
@@ -229,7 +229,7 @@ export function ZoneEditor({ imageSrc, zones, maxZones, onChangeZones }: ZoneEdi
                             className="rounded bg-red-500/20 px-2 py-1 text-xs text-red-200"
                             onClick={() => removeZone(index)}
                         >
-                            Удалить
+                            Delete
                         </button>
                     </div>
                 ))}
