@@ -204,6 +204,8 @@ def run(settings: Settings | None = None) -> None:
                 time.sleep(cfg.poll_interval_sec)
                 continue
 
+            skip_alpr_this_frame = False
+
             # Motion-gated ALPR: skip expensive inference if no motion detected
             if cfg.motion_detection_enabled and prev_frame is not None:
                 now = datetime.now(timezone.utc)
@@ -226,12 +228,11 @@ def run(settings: Settings | None = None) -> None:
                     if not zones_with_motion:
                         # No motion in any zone, skip ALPR this frame
                         LOG.debug("No motion in any zone, skipping ALPR")
-                        prev_frame = frame
-                        time.sleep(cfg.poll_interval_sec)
-                        continue
+                        skip_alpr_this_frame = True
 
                     # Filter to only zones with motion
-                    active_zones = zones_with_motion
+                    if zones_with_motion:
+                        active_zones = zones_with_motion
                 else:
                     # Full-frame motion check
                     if not has_motion(
@@ -242,9 +243,7 @@ def run(settings: Settings | None = None) -> None:
                     ):
                         # No motion in full frame, skip ALPR this frame
                         LOG.debug("No motion in full frame, skipping ALPR")
-                        prev_frame = frame
-                        time.sleep(cfg.poll_interval_sec)
-                        continue
+                        skip_alpr_this_frame = True
 
             else:
                 # Motion detection disabled or first frame: initialize normally
@@ -258,7 +257,7 @@ def run(settings: Settings | None = None) -> None:
 
             detections = []
             zone_frames: dict[int, np.ndarray] = {}
-            if active_zones:
+            if not skip_alpr_this_frame and active_zones:
                 for zone in active_zones:
                     try:
                         zone_frame = crop_zone(frame, zone)
@@ -279,7 +278,7 @@ def run(settings: Settings | None = None) -> None:
                             zone_name=str(zone.get("name") or ""),
                         )
                     )
-            else:
+            elif not skip_alpr_this_frame:
                 detections = alpr.detect(frame, detected_at=now, frame_id=frame_id)
 
             frame_last_decision: str | None = None
@@ -414,15 +413,29 @@ def run(settings: Settings | None = None) -> None:
 
                     annotated = frame
                     preview_plates = [d.normalized_text for d in detections if d.normalized_text]
-                    try:
-                        annotated, draw_plates = alpr.draw_predictions(frame)
-                        if draw_plates:
-                            preview_plates = draw_plates
-                    except Exception as exc:  # noqa: BLE001
-                        LOG.warning("Preview draw_predictions failed, using raw frame: %s", exc)
+                    if not skip_alpr_this_frame:
+                        try:
+                            annotated, draw_plates = alpr.draw_predictions(frame)
+                            if draw_plates:
+                                preview_plates = draw_plates
+                        except Exception as exc:  # noqa: BLE001
+                            LOG.warning("Preview draw_predictions failed, using raw frame: %s", exc)
 
                     if active_zones:
                         annotated = draw_zones(annotated, active_zones)
+
+                    preview_status = "detect" if detections else ("idle-motion-skip" if skip_alpr_this_frame else "idle")
+                    preview_overlay = f"{now.strftime('%Y-%m-%d %H:%M:%S')} | status={preview_status}"
+                    cv2.putText(
+                        annotated,
+                        preview_overlay,
+                        (12, 28),
+                        cv2.FONT_HERSHEY_SIMPLEX,
+                        0.7,
+                        (0, 255, 255),
+                        2,
+                        cv2.LINE_AA,
+                    )
 
                     _write_preview_artifacts(
                         image=annotated,
