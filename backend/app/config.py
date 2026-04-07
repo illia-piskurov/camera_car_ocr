@@ -66,14 +66,22 @@ class Settings:
     voting_window_sec: float = 1.5
     min_confirmations: int = 3
     min_avg_confidence: float = 0.80
+    fast_open_enabled: bool = True
+    fast_open_confidence: float = 0.91
 
     plate_cooldown_sec: float = 10.0
     global_cooldown_sec: float = 2.0
     dry_run_open: bool = True
+    barrier_action_mode: str = "mock"
 
     db_path: str = "data/app.db"
     onec_sync_interval_hours: float = 24.0
+    onec_provider_mode: str = "stub"
     onec_stub_file: str = "onec_whitelist_stub.txt"
+    onec_http_url: str = ""
+    onec_http_timeout_sec: float = 10.0
+    onec_http_retries: int = 2
+    onec_http_allow_empty_sync: bool = False
     enable_fuzzy_match: bool = False
 
     preview_enabled: bool = True
@@ -108,14 +116,25 @@ class Settings:
             voting_window_sec=float(os.getenv("VOTING_WINDOW_SEC", Settings.voting_window_sec)),
             min_confirmations=int(os.getenv("MIN_CONFIRMATIONS", Settings.min_confirmations)),
             min_avg_confidence=float(os.getenv("MIN_AVG_CONFIDENCE", Settings.min_avg_confidence)),
+            fast_open_enabled=os.getenv("FAST_OPEN_ENABLED", "1") in {"1", "true", "True"},
+            fast_open_confidence=float(os.getenv("FAST_OPEN_CONFIDENCE", Settings.fast_open_confidence)),
             plate_cooldown_sec=float(os.getenv("PLATE_COOLDOWN_SEC", Settings.plate_cooldown_sec)),
             global_cooldown_sec=float(os.getenv("GLOBAL_COOLDOWN_SEC", Settings.global_cooldown_sec)),
             dry_run_open=os.getenv("DRY_RUN_OPEN", "1") in {"1", "true", "True"},
+            barrier_action_mode=os.getenv("BARRIER_ACTION_MODE", Settings.barrier_action_mode),
             db_path=os.getenv("DB_PATH", Settings.db_path),
             onec_sync_interval_hours=float(
                 os.getenv("ONEC_SYNC_INTERVAL_HOURS", Settings.onec_sync_interval_hours)
             ),
+            onec_provider_mode=os.getenv("ONEC_PROVIDER_MODE", Settings.onec_provider_mode),
             onec_stub_file=os.getenv("ONEC_STUB_FILE", Settings.onec_stub_file),
+            onec_http_url=os.getenv("ONEC_HTTP_URL", Settings.onec_http_url),
+            onec_http_timeout_sec=float(
+                os.getenv("ONEC_HTTP_TIMEOUT_SEC", Settings.onec_http_timeout_sec)
+            ),
+            onec_http_retries=int(os.getenv("ONEC_HTTP_RETRIES", Settings.onec_http_retries)),
+            onec_http_allow_empty_sync=os.getenv("ONEC_HTTP_ALLOW_EMPTY_SYNC", "0")
+            in {"1", "true", "True"},
             enable_fuzzy_match=os.getenv("ENABLE_FUZZY_MATCH", "0") in {"1", "true", "True"},
             preview_enabled=os.getenv("PREVIEW_ENABLED", "1") in {"1", "true", "True"},
             preview_write_interval_sec=float(

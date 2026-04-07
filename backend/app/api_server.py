@@ -12,13 +12,13 @@ from pydantic import BaseModel, Field
 
 from .config import Settings
 from .db import Database, utc_now
-from .onec_provider import StubFileWhitelistProvider
+from .onec_provider import create_whitelist_provider
 from .zones import sanitize_zone
 
 cfg = Settings.from_env()
 db = Database(cfg.db_path)
 db.init()
-provider = StubFileWhitelistProvider(cfg.onec_stub_file)
+provider = create_whitelist_provider(cfg)
 
 app = FastAPI(title="ALPR Barrier API", version="0.1.0")
 
@@ -108,11 +108,13 @@ def dashboard() -> dict[str, object]:
         "generated_at": now.isoformat(),
         "mode": {
             "dry_run_open": cfg.dry_run_open,
+            "barrier_action_mode": cfg.barrier_action_mode,
             "min_confirmations": cfg.min_confirmations,
             "min_avg_confidence": cfg.min_avg_confidence,
             "voting_window_sec": cfg.voting_window_sec,
         },
         "sync": {
+            "source": provider.source,
             "last_sync_at": last_sync.isoformat() if last_sync else None,
             "sync_age_seconds": sync_age_seconds,
             "is_due": db.is_sync_due(cfg.onec_sync_interval_hours),
@@ -158,8 +160,18 @@ def put_zones(payload: ZonesPayload) -> dict[str, object]:
 
 @app.post("/api/sync/force")
 def force_sync() -> dict[str, object]:
-    rows = provider.full_sync()
-    synced = db.upsert_whitelist(rows, source="1c_stub")
+    try:
+        rows = provider.full_sync()
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=502, detail=f"Sync failed: {exc}") from exc
+
+    if provider.source == "1c_http" and not rows and not cfg.onec_http_allow_empty_sync:
+        raise HTTPException(
+            status_code=502,
+            detail="1C HTTP sync returned empty list; update blocked by ONEC_HTTP_ALLOW_EMPTY_SYNC=0",
+        )
+
+    synced = db.upsert_whitelist(rows, source=provider.source)
     db.set_last_sync_now()
     last_sync = db.get_last_sync_at()
 

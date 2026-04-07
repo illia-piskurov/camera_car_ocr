@@ -18,18 +18,24 @@ from .config import Settings
 from .db import Database
 from .decision import BarrierDecisionEngine
 from .motion_detector import has_motion, has_motion_in_zone
-from .onec_provider import StubFileWhitelistProvider
+from .onec_provider import WhitelistProvider, create_whitelist_provider
+from .types import VoteOutcome
 from .voting import TemporalVoter
 from .zones import crop_zone, draw_zones, paste_zone_image
 
 LOG = logging.getLogger(__name__)
 
 
-def _sync_whitelist(db: Database, provider: StubFileWhitelistProvider) -> None:
+def _sync_whitelist(db: Database, provider: WhitelistProvider, cfg: Settings) -> None:
     rows = provider.full_sync()
-    count = db.upsert_whitelist(rows, source="1c_stub")
+
+    if provider.source == "1c_http" and not rows and not cfg.onec_http_allow_empty_sync:
+        LOG.warning("1C HTTP sync returned empty list; skipping DB update due to ONEC_HTTP_ALLOW_EMPTY_SYNC=0")
+        return
+
+    count = db.upsert_whitelist(rows, source=provider.source)
     db.set_last_sync_now()
-    LOG.info("Whitelist synced from stub: %s plates", count)
+    LOG.info("Whitelist synced from %s: %s plates", provider.source, count)
 
 
 def _write_preview_artifacts(
@@ -170,9 +176,12 @@ def run(settings: Settings | None = None) -> None:
     db = Database(cfg.db_path)
     db.init()
 
-    provider = StubFileWhitelistProvider(cfg.onec_stub_file)
+    provider = create_whitelist_provider(cfg)
     if db.is_sync_due(cfg.onec_sync_interval_hours):
-        _sync_whitelist(db, provider)
+        try:
+            _sync_whitelist(db, provider, cfg)
+        except Exception as exc:  # noqa: BLE001
+            LOG.warning("Initial whitelist sync failed: %s", exc)
 
     camera = SnapshotCameraClient(
         url=cfg.camera_snapshot_url,
@@ -188,16 +197,24 @@ def run(settings: Settings | None = None) -> None:
         plate_cooldown_sec=cfg.plate_cooldown_sec,
         global_cooldown_sec=cfg.global_cooldown_sec,
     )
-    barrier = BarrierController(dry_run=cfg.dry_run_open)
+    barrier = BarrierController(dry_run=cfg.dry_run_open, action_mode=cfg.barrier_action_mode)
 
-    LOG.info("Pipeline started. dry_run=%s", cfg.dry_run_open)
+    LOG.info(
+        "Pipeline started. dry_run=%s barrier_action_mode=%s whitelist_provider=%s",
+        cfg.dry_run_open,
+        cfg.barrier_action_mode,
+        provider.source,
+    )
     last_preview_write_ts = 0.0
     prev_frame: np.ndarray | None = None
 
     try:
         while True:
             if db.is_sync_due(cfg.onec_sync_interval_hours):
-                _sync_whitelist(db, provider)
+                try:
+                    _sync_whitelist(db, provider, cfg)
+                except Exception as exc:  # noqa: BLE001
+                    LOG.warning("Scheduled whitelist sync failed: %s", exc)
 
             frame = camera.fetch_frame()
             if frame is None:
@@ -302,6 +319,62 @@ def run(settings: Settings | None = None) -> None:
                         decision="observed",
                         reason_code="raw_detection",
                     )
+
+                    # Fast-path for very confident recognition by detector confidence: decide immediately.
+                    if cfg.fast_open_enabled and detection.detection_confidence >= cfg.fast_open_confidence:
+                        fast_vote = VoteOutcome(
+                            plate=detection.normalized_text,
+                            fuzzy_plate=detection.fuzzy_text,
+                            confirmations=1,
+                            avg_confidence=detection.detection_confidence,
+                            window_sec=cfg.voting_window_sec,
+                        )
+                        whitelisted = db.is_whitelisted(
+                            plate=fast_vote.plate,
+                            fuzzy_plate=fast_vote.fuzzy_plate,
+                            enable_fuzzy_match=cfg.enable_fuzzy_match,
+                        )
+                        decision = decider.evaluate(
+                            vote=fast_vote,
+                            is_whitelisted=whitelisted,
+                            now=detection.detected_at,
+                        )
+                        frame_last_decision = "open" if decision.should_open else "deny"
+                        frame_last_plate = fast_vote.plate
+                        frame_last_reason = (
+                            f"fast_{decision.reason_code}" if decision.reason_code else "fast_open_approved"
+                        )
+                        frame_last_zone = detection.zone_name
+                        snapshot_source_detection = detection
+
+                        db.record_event(
+                            occurred_at=detection.detected_at,
+                            frame_id=detection.frame_id,
+                            raw_plate=detection.raw_text,
+                            plate=fast_vote.plate,
+                            fuzzy_plate=fast_vote.fuzzy_plate,
+                            detection_confidence=detection.detection_confidence,
+                            ocr_confidence=detection.ocr_confidence,
+                            vote_confirmations=fast_vote.confirmations,
+                            vote_avg_confidence=fast_vote.avg_confidence,
+                            zone_id=detection.zone_id,
+                            zone_name=detection.zone_name,
+                            decision=frame_last_decision,
+                            reason_code=frame_last_reason,
+                        )
+
+                        LOG.info(
+                            "Fast decision plate=%s det_conf=%.3f ocr_conf=%.3f decision=%s reason=%s",
+                            fast_vote.plate,
+                            detection.detection_confidence,
+                            detection.ocr_confidence,
+                            frame_last_decision,
+                            frame_last_reason,
+                        )
+
+                        if decision.should_open:
+                            barrier.open(fast_vote.plate, frame_last_reason)
+                        continue
 
                     voter_key = f"zone:{detection.zone_id}" if detection.zone_id is not None else "full"
                     voter = voters.get(voter_key)

@@ -5,6 +5,26 @@ from dataclasses import dataclass
 
 NON_ALNUM = re.compile(r"[^A-Z0-9]")
 
+# UA/CIS plates often come with Cyrillic letters that are visually identical to Latin.
+# Convert them before filtering so values from 1C (e.g., "ВМ0756АХ") stay matchable.
+CYRILLIC_TO_LATIN = str.maketrans(
+    {
+        "А": "A",
+        "В": "B",
+        "Е": "E",
+        "І": "I",
+        "К": "K",
+        "М": "M",
+        "Н": "H",
+        "О": "O",
+        "Р": "P",
+        "С": "C",
+        "Т": "T",
+        "У": "Y",
+        "Х": "X",
+    }
+)
+
 # Keep fuzzy mapping explicit and limited. Disable by default in settings.
 FUZZY_MAP = str.maketrans(
     {
@@ -26,6 +46,7 @@ class NormalizedPlate:
 
 
 def normalize_plate(value: str) -> NormalizedPlate:
-    normalized = NON_ALNUM.sub("", value.strip().upper())
+    canonical = value.strip().upper().translate(CYRILLIC_TO_LATIN)
+    normalized = NON_ALNUM.sub("", canonical)
     fuzzy = normalized.translate(FUZZY_MAP)
     return NormalizedPlate(normalized=normalized, fuzzy=fuzzy)
