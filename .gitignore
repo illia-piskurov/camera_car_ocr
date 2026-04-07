@@ -13,3 +13,5 @@ outputs
 samples
 backend/data/
 .env
+
+data/
