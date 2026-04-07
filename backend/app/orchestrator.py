@@ -17,6 +17,7 @@ from .camera import SnapshotCameraClient
 from .config import Settings
 from .db import Database
 from .decision import BarrierDecisionEngine
+from .motion_detector import has_motion, has_motion_in_zone
 from .onec_provider import StubFileWhitelistProvider
 from .voting import TemporalVoter
 from .zones import crop_zone, draw_zones, paste_zone_image
@@ -191,6 +192,7 @@ def run(settings: Settings | None = None) -> None:
 
     LOG.info("Pipeline started. dry_run=%s", cfg.dry_run_open)
     last_preview_write_ts = 0.0
+    prev_frame: np.ndarray | None = None
 
     try:
         while True:
@@ -202,16 +204,60 @@ def run(settings: Settings | None = None) -> None:
                 time.sleep(cfg.poll_interval_sec)
                 continue
 
-            now = datetime.now(timezone.utc)
-            frame_id = uuid4().hex
-            active_zones = db.get_zones(include_disabled=False)[:3]
+            skip_alpr_this_frame = False
+
+            # Motion-gated ALPR: skip expensive inference if no motion detected
+            if cfg.motion_detection_enabled and prev_frame is not None:
+                now = datetime.now(timezone.utc)
+                frame_id = uuid4().hex
+                active_zones = db.get_zones(include_disabled=False)[:3]
+
+                if active_zones:
+                    # Per-zone motion check: only process zones with motion
+                    zones_with_motion = []
+                    for zone in active_zones:
+                        if has_motion_in_zone(
+                            prev_frame,
+                            frame,
+                            zone,
+                            threshold=cfg.motion_threshold_percent,
+                            blur_kernel=cfg.motion_blur_kernel,
+                        ):
+                            zones_with_motion.append(zone)
+
+                    if not zones_with_motion:
+                        # No motion in any zone, skip ALPR this frame
+                        LOG.debug("No motion in any zone, skipping ALPR")
+                        skip_alpr_this_frame = True
+
+                    # Filter to only zones with motion
+                    if zones_with_motion:
+                        active_zones = zones_with_motion
+                else:
+                    # Full-frame motion check
+                    if not has_motion(
+                        prev_frame,
+                        frame,
+                        threshold=cfg.motion_threshold_percent,
+                        blur_kernel=cfg.motion_blur_kernel,
+                    ):
+                        # No motion in full frame, skip ALPR this frame
+                        LOG.debug("No motion in full frame, skipping ALPR")
+                        skip_alpr_this_frame = True
+
+            else:
+                # Motion detection disabled or first frame: initialize normally
+                now = datetime.now(timezone.utc)
+                frame_id = uuid4().hex
+                active_zones = db.get_zones(include_disabled=False)[:3]
+
             active_zones_by_id: dict[int, dict[str, object]] = {
                 int(zone["id"]): zone for zone in active_zones if zone.get("id") is not None
             }
 
             detections = []
             zone_frames: dict[int, np.ndarray] = {}
-            if active_zones:
+            if not skip_alpr_this_frame and active_zones:
                 for zone in active_zones:
                     try:
                         zone_frame = crop_zone(frame, zone)
@@ -232,7 +278,7 @@ def run(settings: Settings | None = None) -> None:
                             zone_name=str(zone.get("name") or ""),
                         )
                     )
-            else:
+            elif not skip_alpr_this_frame:
                 detections = alpr.detect(frame, detected_at=now, frame_id=frame_id)
 
             frame_last_decision: str | None = None
@@ -367,15 +413,29 @@ def run(settings: Settings | None = None) -> None:
 
                     annotated = frame
                     preview_plates = [d.normalized_text for d in detections if d.normalized_text]
-                    try:
-                        annotated, draw_plates = alpr.draw_predictions(frame)
-                        if draw_plates:
-                            preview_plates = draw_plates
-                    except Exception as exc:  # noqa: BLE001
-                        LOG.warning("Preview draw_predictions failed, using raw frame: %s", exc)
+                    if not skip_alpr_this_frame:
+                        try:
+                            annotated, draw_plates = alpr.draw_predictions(frame)
+                            if draw_plates:
+                                preview_plates = draw_plates
+                        except Exception as exc:  # noqa: BLE001
+                            LOG.warning("Preview draw_predictions failed, using raw frame: %s", exc)
 
                     if active_zones:
                         annotated = draw_zones(annotated, active_zones)
+
+                    preview_status = "detect" if detections else ("idle-motion-skip" if skip_alpr_this_frame else "idle")
+                    preview_overlay = f"{now.strftime('%Y-%m-%d %H:%M:%S')} | status={preview_status}"
+                    cv2.putText(
+                        annotated,
+                        preview_overlay,
+                        (12, 28),
+                        cv2.FONT_HERSHEY_SIMPLEX,
+                        0.7,
+                        (0, 255, 255),
+                        2,
+                        cv2.LINE_AA,
+                    )
 
                     _write_preview_artifacts(
                         image=annotated,
@@ -388,6 +448,7 @@ def run(settings: Settings | None = None) -> None:
                         jpeg_quality=cfg.preview_jpeg_quality,
                     )
 
+            prev_frame = frame
             time.sleep(cfg.poll_interval_sec)
     except KeyboardInterrupt:
         LOG.info("Pipeline interrupted by user")
