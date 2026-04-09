@@ -320,13 +320,13 @@ def run(settings: Settings | None = None) -> None:
                         reason_code="raw_detection",
                     )
 
-                    # Fast-path for very confident recognition by detector confidence: decide immediately.
-                    if cfg.fast_open_enabled and detection.detection_confidence >= cfg.fast_open_confidence:
+                    # Fast-path for very confident OCR: decide immediately.
+                    if cfg.fast_open_enabled and detection.ocr_confidence >= cfg.fast_open_confidence:
                         fast_vote = VoteOutcome(
                             plate=detection.normalized_text,
                             fuzzy_plate=detection.fuzzy_text,
                             confirmations=1,
-                            avg_confidence=detection.detection_confidence,
+                            avg_confidence=detection.ocr_confidence,
                             window_sec=cfg.voting_window_sec,
                         )
                         whitelisted = db.is_whitelisted(
@@ -364,10 +364,10 @@ def run(settings: Settings | None = None) -> None:
                         )
 
                         LOG.info(
-                            "Fast decision plate=%s det_conf=%.3f ocr_conf=%.3f decision=%s reason=%s",
+                            "Fast decision plate=%s ocr_conf=%.3f det_conf=%.3f decision=%s reason=%s",
                             fast_vote.plate,
-                            detection.detection_confidence,
                             detection.ocr_confidence,
+                            detection.detection_confidence,
                             frame_last_decision,
                             frame_last_reason,
                         )

@@ -63,8 +63,8 @@ class Settings:
     detector_model: str = "yolo-v9-t-384-license-plate-end2end"
     ocr_model: str = "global-plates-mobile-vit-v2-model"
 
-    voting_window_sec: float = 1.5
-    min_confirmations: int = 3
+    voting_window_sec: float = 4.0
+    min_confirmations: int = 2
     min_avg_confidence: float = 0.80
     fast_open_enabled: bool = True
     fast_open_confidence: float = 0.91
