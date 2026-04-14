@@ -204,6 +204,14 @@ def run(settings: Settings | None = None) -> None:
         ha_token=cfg.barrier_ha_token,
         open_entity_id=cfg.barrier_open_entity_id,
         close_entity_id=cfg.barrier_close_entity_id,
+        zone_open_entity_ids={
+            1: cfg.zone1_barrier_open_entity_id,
+            2: cfg.zone2_barrier_open_entity_id,
+        },
+        zone_close_entity_ids={
+            1: cfg.zone1_barrier_close_entity_id,
+            2: cfg.zone2_barrier_close_entity_id,
+        },
         timeout_sec=cfg.barrier_request_timeout_sec,
         retries=cfg.barrier_request_retries,
         verify_tls=cfg.barrier_verify_tls,
@@ -217,8 +225,29 @@ def run(settings: Settings | None = None) -> None:
     )
     last_preview_write_ts = 0.0
     prev_frame: np.ndarray | None = None
-    pending_close_at: float | None = None
-    pending_close_plate: str | None = None
+    pending_close_at_by_zone: dict[int | None, float] = {}
+    pending_close_plate_by_zone: dict[int | None, str] = {}
+
+    def close_expired_barriers(now_monotonic: float) -> None:
+        expired_zone_ids = [
+            zone_id
+            for zone_id, close_at in pending_close_at_by_zone.items()
+            if now_monotonic >= close_at
+        ]
+        for zone_id in expired_zone_ids:
+            close_plate = pending_close_plate_by_zone.get(zone_id)
+            try:
+                barrier.close(reason="auto_close_timer", plate=close_plate, zone_id=zone_id)
+            except Exception as exc:  # noqa: BLE001
+                LOG.warning(
+                    "Barrier close call failed plate=%s zone=%s reason=auto_close_timer: %s",
+                    close_plate,
+                    zone_id if zone_id is not None else "full",
+                    exc,
+                )
+            finally:
+                pending_close_at_by_zone.pop(zone_id, None)
+                pending_close_plate_by_zone.pop(zone_id, None)
 
     try:
         while True:
@@ -230,19 +259,7 @@ def run(settings: Settings | None = None) -> None:
 
             frame = camera.fetch_frame()
             if frame is None:
-                now_monotonic = time.monotonic()
-                if pending_close_at is not None and now_monotonic >= pending_close_at:
-                    try:
-                        barrier.close(reason="auto_close_timer", plate=pending_close_plate)
-                    except Exception as exc:  # noqa: BLE001
-                        LOG.warning(
-                            "Barrier close call failed plate=%s reason=auto_close_timer: %s",
-                            pending_close_plate,
-                            exc,
-                        )
-                    finally:
-                        pending_close_at = None
-                        pending_close_plate = None
+                close_expired_barriers(time.monotonic())
                 time.sleep(cfg.poll_interval_sec)
                 continue
 
@@ -400,20 +417,24 @@ def run(settings: Settings | None = None) -> None:
                         if decision.should_open:
                             opened = False
                             try:
-                                opened = barrier.open(fast_vote.plate, frame_last_reason)
+                                opened = barrier.open(
+                                    fast_vote.plate,
+                                    frame_last_reason,
+                                    zone_id=detection.zone_id,
+                                )
                             except Exception as exc:  # noqa: BLE001
                                 LOG.warning(
-                                    "Barrier open call failed plate=%s reason=%s: %s",
+                                    "Barrier open call failed plate=%s zone=%s reason=%s: %s",
                                     fast_vote.plate,
+                                    detection.zone_id if detection.zone_id is not None else "full",
                                     frame_last_reason,
                                     exc,
                                 )
                             if opened:
-                                pending_close_at = time.monotonic() + max(
-                                    0.1,
-                                    cfg.barrier_close_delay_sec,
-                                )
-                                pending_close_plate = fast_vote.plate
+                                zone_id = detection.zone_id
+                                close_delay = max(0.1, cfg.get_zone_close_delay_sec(zone_id))
+                                pending_close_at_by_zone[zone_id] = time.monotonic() + close_delay
+                                pending_close_plate_by_zone[zone_id] = fast_vote.plate
                         continue
 
                     voter_key = f"zone:{detection.zone_id}" if detection.zone_id is not None else "full"
@@ -470,44 +491,39 @@ def run(settings: Settings | None = None) -> None:
                     if decision.should_open:
                         opened = False
                         try:
-                            opened = barrier.open(vote.plate, decision.reason_code)
+                            opened = barrier.open(
+                                vote.plate,
+                                decision.reason_code,
+                                zone_id=detection.zone_id,
+                            )
                         except Exception as exc:  # noqa: BLE001
                             LOG.warning(
-                                "Barrier open call failed plate=%s reason=%s: %s",
+                                "Barrier open call failed plate=%s zone=%s reason=%s: %s",
                                 vote.plate,
+                                detection.zone_id if detection.zone_id is not None else "full",
                                 decision.reason_code,
                                 exc,
                             )
                         if opened:
-                            pending_close_at = time.monotonic() + max(
-                                0.1,
-                                cfg.barrier_close_delay_sec,
-                            )
-                            pending_close_plate = vote.plate
+                            zone_id = detection.zone_id
+                            close_delay = max(0.1, cfg.get_zone_close_delay_sec(zone_id))
+                            pending_close_at_by_zone[zone_id] = time.monotonic() + close_delay
+                            pending_close_plate_by_zone[zone_id] = vote.plate
 
-            if detections and pending_close_at is not None:
-                # Safety hold: while any plate is visible, keep close deadline at now + delay.
-                pending_close_at = time.monotonic() + max(0.1, cfg.barrier_close_delay_sec)
-                if frame_last_plate:
-                    pending_close_plate = frame_last_plate
-                elif detections[0].normalized_text:
-                    pending_close_plate = detections[0].normalized_text
-                elif detections[0].raw_text:
-                    pending_close_plate = detections[0].raw_text
+            if detections:
+                for detection in detections:
+                    zone_id = detection.zone_id
+                    if zone_id not in pending_close_at_by_zone:
+                        continue
+                    # Safety hold per zone: while any plate is visible in zone, keep that zone open.
+                    close_delay = max(0.1, cfg.get_zone_close_delay_sec(zone_id))
+                    pending_close_at_by_zone[zone_id] = time.monotonic() + close_delay
+                    if detection.normalized_text:
+                        pending_close_plate_by_zone[zone_id] = detection.normalized_text
+                    elif detection.raw_text:
+                        pending_close_plate_by_zone[zone_id] = detection.raw_text
 
-            now_monotonic = time.monotonic()
-            if pending_close_at is not None and now_monotonic >= pending_close_at:
-                try:
-                    barrier.close(reason="auto_close_timer", plate=pending_close_plate)
-                except Exception as exc:  # noqa: BLE001
-                    LOG.warning(
-                        "Barrier close call failed plate=%s reason=auto_close_timer: %s",
-                        pending_close_plate,
-                        exc,
-                    )
-                finally:
-                    pending_close_at = None
-                    pending_close_plate = None
+            close_expired_barriers(time.monotonic())
 
             if (
                 cfg.recognition_snapshot_enabled

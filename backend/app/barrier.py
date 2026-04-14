@@ -17,6 +17,8 @@ class BarrierController:
         ha_token: str = "",
         open_entity_id: str = "",
         close_entity_id: str = "",
+        zone_open_entity_ids: dict[int, str] | None = None,
+        zone_close_entity_ids: dict[int, str] | None = None,
         timeout_sec: float = 3.0,
         retries: int = 2,
         verify_tls: bool = True,
@@ -31,6 +33,14 @@ class BarrierController:
         self.ha_token = (ha_token or "").strip()
         self.open_entity_id = (open_entity_id or "").strip()
         self.close_entity_id = (close_entity_id or "").strip()
+        self.zone_open_entity_ids = {
+            int(zone_id): (entity_id or "").strip()
+            for zone_id, entity_id in (zone_open_entity_ids or {}).items()
+        }
+        self.zone_close_entity_ids = {
+            int(zone_id): (entity_id or "").strip()
+            for zone_id, entity_id in (zone_close_entity_ids or {}).items()
+        }
         self.timeout_sec = max(0.1, float(timeout_sec))
         self.retries = max(1, int(retries))
         self.verify_tls = bool(verify_tls)
@@ -43,20 +53,58 @@ class BarrierController:
             self._enabled_live = False
 
     def _is_live_configured(self) -> bool:
-        return all(
-            [
-                self.ha_base_url,
-                self.ha_token,
-                self.open_entity_id,
-                self.close_entity_id,
-            ]
-        )
+        if not self.ha_base_url or not self.ha_token:
+            return False
 
-    def _press_input_button(self, *, entity_id: str, plate: str | None, reason: str, action: str) -> bool:
+        if self.open_entity_id and self.close_entity_id:
+            return True
+
+        for zone_id in set(self.zone_open_entity_ids) | set(self.zone_close_entity_ids):
+            if self.zone_open_entity_ids.get(zone_id) and self.zone_close_entity_ids.get(zone_id):
+                return True
+        return False
+
+    def _resolve_entity_id(self, *, action: str, zone_id: int | None) -> str:
+        if action == "open":
+            if zone_id is not None:
+                zone_entity = self.zone_open_entity_ids.get(zone_id)
+                if zone_entity:
+                    return zone_entity
+            return self.open_entity_id
+
+        if zone_id is not None:
+            zone_entity = self.zone_close_entity_ids.get(zone_id)
+            if zone_entity:
+                return zone_entity
+        return self.close_entity_id
+
+    def _press_input_button(
+        self,
+        *,
+        entity_id: str,
+        plate: str | None,
+        reason: str,
+        action: str,
+        zone_id: int | None,
+    ) -> bool:
         if not self._enabled_live:
             label = plate if plate else "-"
-            LOG.info("MOCK barrier %s decision for %s (%s)", action, label, reason)
+            LOG.info(
+                "MOCK barrier %s decision for %s (%s) zone=%s",
+                action,
+                label,
+                reason,
+                zone_id if zone_id is not None else "full",
+            )
             return True
+
+        if not entity_id:
+            LOG.warning(
+                "Barrier %s skipped because entity_id is not configured for zone=%s",
+                action,
+                zone_id if zone_id is not None else "full",
+            )
+            return False
 
         url = f"{self.ha_base_url}/api/services/input_button/press"
         headers = {
@@ -72,11 +120,12 @@ class BarrierController:
                     response = client.post(url, headers=headers, json=payload)
                     response.raise_for_status()
                 LOG.info(
-                    "Barrier %s executed entity_id=%s plate=%s reason=%s",
+                    "Barrier %s executed entity_id=%s plate=%s reason=%s zone=%s",
                     action,
                     entity_id,
                     plate or "-",
                     reason,
+                    zone_id if zone_id is not None else "full",
                 )
                 return True
             except Exception as exc:  # noqa: BLE001
@@ -85,27 +134,30 @@ class BarrierController:
                     time.sleep(0.3 * attempt)
 
         LOG.warning(
-            "Barrier %s failed entity_id=%s plate=%s reason=%s error=%s",
+            "Barrier %s failed entity_id=%s plate=%s reason=%s zone=%s error=%s",
             action,
             entity_id,
             plate or "-",
             reason,
+            zone_id if zone_id is not None else "full",
             last_exc,
         )
         return False
 
-    def open(self, plate: str, reason: str) -> bool:
+    def open(self, plate: str, reason: str, zone_id: int | None = None) -> bool:
         return self._press_input_button(
-            entity_id=self.open_entity_id,
+            entity_id=self._resolve_entity_id(action="open", zone_id=zone_id),
             plate=plate,
             reason=reason,
             action="open",
+            zone_id=zone_id,
         )
 
-    def close(self, reason: str, plate: str | None = None) -> bool:
+    def close(self, reason: str, plate: str | None = None, zone_id: int | None = None) -> bool:
         return self._press_input_button(
-            entity_id=self.close_entity_id,
+            entity_id=self._resolve_entity_id(action="close", zone_id=zone_id),
             plate=plate,
             reason=reason,
             action="close",
+            zone_id=zone_id,
         )

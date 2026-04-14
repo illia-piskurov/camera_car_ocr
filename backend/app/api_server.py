@@ -110,12 +110,11 @@ def dashboard() -> dict[str, object]:
             "dry_run_open": cfg.dry_run_open,
             "barrier_action_mode": cfg.barrier_action_mode,
             "barrier_close_delay_sec": cfg.barrier_close_delay_sec,
-            "barrier_live_configured": bool(
-                cfg.barrier_ha_base_url
-                and cfg.barrier_ha_token
-                and cfg.barrier_open_entity_id
-                and cfg.barrier_close_entity_id
-            ),
+            "barrier_live_configured": cfg.is_barrier_live_configured(),
+            "zone1_barrier_configured": cfg.has_zone_barrier_entities(1),
+            "zone2_barrier_configured": cfg.has_zone_barrier_entities(2),
+            "zone1_close_delay_sec": cfg.get_zone_close_delay_sec(1),
+            "zone2_close_delay_sec": cfg.get_zone_close_delay_sec(2),
             "min_confirmations": cfg.min_confirmations,
             "min_avg_confidence": cfg.min_avg_confidence,
             "voting_window_sec": cfg.voting_window_sec,

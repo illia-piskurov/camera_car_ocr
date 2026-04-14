@@ -77,6 +77,12 @@ class Settings:
     barrier_ha_token: str = ""
     barrier_open_entity_id: str = ""
     barrier_close_entity_id: str = ""
+    zone1_barrier_open_entity_id: str = ""
+    zone1_barrier_close_entity_id: str = ""
+    zone1_barrier_close_delay_sec: float = 0.0
+    zone2_barrier_open_entity_id: str = ""
+    zone2_barrier_close_entity_id: str = ""
+    zone2_barrier_close_delay_sec: float = 0.0
     barrier_request_timeout_sec: float = 3.0
     barrier_request_retries: int = 2
     barrier_verify_tls: bool = True
@@ -108,6 +114,38 @@ class Settings:
     motion_threshold_percent: float = 0.05
     motion_blur_kernel: int = 5
 
+    def has_global_barrier_entities(self) -> bool:
+        return bool(self.barrier_open_entity_id and self.barrier_close_entity_id)
+
+    def has_zone_barrier_entities(self, zone_id: int) -> bool:
+        open_id, close_id = self.get_zone_barrier_entities(zone_id)
+        return bool(open_id and close_id)
+
+    def is_barrier_live_configured(self) -> bool:
+        if not self.barrier_ha_base_url or not self.barrier_ha_token:
+            return False
+        return self.has_global_barrier_entities() or self.has_zone_barrier_entities(1) or self.has_zone_barrier_entities(2)
+
+    def get_zone_barrier_entities(self, zone_id: int | None) -> tuple[str, str]:
+        if zone_id == 1:
+            return self.zone1_barrier_open_entity_id, self.zone1_barrier_close_entity_id
+        if zone_id == 2:
+            return self.zone2_barrier_open_entity_id, self.zone2_barrier_close_entity_id
+        return self.barrier_open_entity_id, self.barrier_close_entity_id
+
+    def resolve_barrier_entities(self, zone_id: int | None) -> tuple[str, str]:
+        open_id, close_id = self.get_zone_barrier_entities(zone_id)
+        if open_id and close_id:
+            return open_id, close_id
+        return self.barrier_open_entity_id, self.barrier_close_entity_id
+
+    def get_zone_close_delay_sec(self, zone_id: int | None) -> float:
+        if zone_id == 1 and self.zone1_barrier_close_delay_sec > 0:
+            return self.zone1_barrier_close_delay_sec
+        if zone_id == 2 and self.zone2_barrier_close_delay_sec > 0:
+            return self.zone2_barrier_close_delay_sec
+        return self.barrier_close_delay_sec
+
     @staticmethod
     def from_env() -> "Settings":
         _load_local_env_files()
@@ -137,6 +175,24 @@ class Settings:
             ),
             barrier_close_entity_id=os.getenv(
                 "BARRIER_CLOSE_ENTITY_ID", Settings.barrier_close_entity_id
+            ),
+            zone1_barrier_open_entity_id=os.getenv(
+                "ZONE1_BARRIER_OPEN_ENTITY_ID", Settings.zone1_barrier_open_entity_id
+            ),
+            zone1_barrier_close_entity_id=os.getenv(
+                "ZONE1_BARRIER_CLOSE_ENTITY_ID", Settings.zone1_barrier_close_entity_id
+            ),
+            zone1_barrier_close_delay_sec=float(
+                os.getenv("ZONE1_BARRIER_CLOSE_DELAY_SEC", Settings.zone1_barrier_close_delay_sec)
+            ),
+            zone2_barrier_open_entity_id=os.getenv(
+                "ZONE2_BARRIER_OPEN_ENTITY_ID", Settings.zone2_barrier_open_entity_id
+            ),
+            zone2_barrier_close_entity_id=os.getenv(
+                "ZONE2_BARRIER_CLOSE_ENTITY_ID", Settings.zone2_barrier_close_entity_id
+            ),
+            zone2_barrier_close_delay_sec=float(
+                os.getenv("ZONE2_BARRIER_CLOSE_DELAY_SEC", Settings.zone2_barrier_close_delay_sec)
             ),
             barrier_request_timeout_sec=float(
                 os.getenv("BARRIER_REQUEST_TIMEOUT_SEC", Settings.barrier_request_timeout_sec)
