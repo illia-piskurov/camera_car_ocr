@@ -18,9 +18,10 @@ from .motion_detector import has_motion_in_zone
 from .onec_provider import WhitelistProvider, create_whitelist_provider
 from .preview_pipeline import write_preview_artifacts, write_recognition_snapshot
 from .runtime_state import ZoneRuntimeState
-from .types import PlateDetection, VoteOutcome
+from .types import PlateDetection
 from .voting import TemporalVoter
 from .zones import crop_zone, draw_zones, paste_zone_image
+from . import stages
 
 LOG = logging.getLogger(__name__)
 
@@ -173,41 +174,6 @@ def _detect_in_zones(
     return detections, zone_frames
 
 
-def _try_open_zone(
-    *,
-    should_open: bool,
-    zone_id: int | None,
-    plate: str,
-    reason: str,
-    barrier: BarrierController,
-    cfg: Settings,
-    zone_states: dict[int | None, ZoneRuntimeState],
-) -> None:
-    if not should_open:
-        return
-
-    state = zone_states.setdefault(zone_id, ZoneRuntimeState())
-    if state.is_open:
-        return
-
-    opened = False
-    try:
-        opened = barrier.open(plate, reason, zone_id=zone_id)
-    except Exception as exc:  # noqa: BLE001
-        LOG.warning(
-            "Barrier open call failed plate=%s zone=%s reason=%s: %s",
-            plate,
-            zone_id if zone_id is not None else "full",
-            reason,
-            exc,
-        )
-
-    if opened:
-        now_monotonic = time.monotonic()
-        close_delay = max(0.1, cfg.get_zone_close_delay_sec(zone_id))
-        state.mark_open(plate=plate, now_monotonic=now_monotonic, close_delay_sec=close_delay)
-
-
 def _handle_detections(
     *,
     detections: list[PlateDetection],
@@ -226,120 +192,86 @@ def _handle_detections(
     )
 
     for detection in detections:
-        db.record_event(
-            occurred_at=detection.detected_at,
-            frame_id=detection.frame_id,
-            raw_plate=detection.raw_text,
-            plate=detection.normalized_text,
-            fuzzy_plate=detection.fuzzy_text,
-            detection_confidence=detection.detection_confidence,
-            ocr_confidence=detection.ocr_confidence,
-            zone_id=detection.zone_id,
-            zone_name=detection.zone_name,
+        # Record raw detection event
+        stages.record_decision_event(
+            detection=detection,
+            vote=None,
             decision="observed",
             reason_code="raw_detection",
+            db=db,
         )
 
+        # Route to fast-open or temporal voting
         if cfg.fast_open_enabled and detection.ocr_confidence >= cfg.fast_open_confidence:
-            fast_vote = VoteOutcome(
-                plate=detection.normalized_text,
-                fuzzy_plate=detection.fuzzy_text,
-                confirmations=1,
-                avg_confidence=detection.ocr_confidence,
-                window_sec=cfg.voting_window_sec,
+            # Fast-open path: treat single high-confidence detection as immediate vote
+            should_open, reason_code = stages.evaluate_decision(
+                vote_or_detection=detection,
+                db=db,
+                cfg=cfg,
+                is_fast_open=True,
             )
-            whitelisted = db.is_whitelisted(
-                plate=fast_vote.plate,
-                fuzzy_plate=fast_vote.fuzzy_plate,
-                enable_fuzzy_match=cfg.enable_fuzzy_match,
-            )
-            should_open = whitelisted
-            decision_reason = "open_approved" if should_open else "not_whitelisted"
 
             result.frame_last_decision = "open" if should_open else "deny"
-            result.frame_last_plate = fast_vote.plate
-            result.frame_last_reason = f"fast_{decision_reason}"
+            result.frame_last_plate = detection.normalized_text
+            result.frame_last_reason = reason_code
             result.frame_last_zone = detection.zone_name
             result.snapshot_source_detection = detection
 
-            db.record_event(
-                occurred_at=detection.detected_at,
-                frame_id=detection.frame_id,
-                raw_plate=detection.raw_text,
-                plate=fast_vote.plate,
-                fuzzy_plate=fast_vote.fuzzy_plate,
-                detection_confidence=detection.detection_confidence,
-                ocr_confidence=detection.ocr_confidence,
-                vote_confirmations=fast_vote.confirmations,
-                vote_avg_confidence=fast_vote.avg_confidence,
-                zone_id=detection.zone_id,
-                zone_name=detection.zone_name,
+            stages.record_decision_event(
+                detection=detection,
+                vote=None,
                 decision=result.frame_last_decision,
-                reason_code=result.frame_last_reason,
+                reason_code=reason_code,
+                db=db,
             )
 
             LOG.info(
                 "Fast decision plate=%s ocr_conf=%.3f det_conf=%.3f decision=%s reason=%s",
-                fast_vote.plate,
+                detection.normalized_text,
                 detection.ocr_confidence,
                 detection.detection_confidence,
                 result.frame_last_decision,
-                result.frame_last_reason,
+                reason_code,
             )
 
-            _try_open_zone(
+            stages.execute_barrier_action(
                 should_open=should_open,
-                zone_id=detection.zone_id,
-                plate=fast_vote.plate,
-                reason=result.frame_last_reason,
+                detection=detection,
+                reason_code=reason_code,
                 barrier=barrier,
                 cfg=cfg,
                 zone_states=zone_states,
             )
             continue
 
-        voter_key = f"zone:{detection.zone_id}" if detection.zone_id is not None else "full"
-        voter = voters.get(voter_key)
-        if voter is None:
-            voter = TemporalVoter(
-                window_sec=cfg.voting_window_sec,
-                min_confirmations=cfg.min_confirmations,
-                min_avg_confidence=cfg.min_avg_confidence,
-            )
-            voters[voter_key] = voter
-
-        vote = voter.observe(detection)
+        # Temporal voting path
+        vote = stages.apply_temporal_voting(
+            detection=detection,
+            voters=voters,
+            cfg=cfg,
+        )
         if vote is None:
             continue
 
-        whitelisted = db.is_whitelisted(
-            plate=vote.plate,
-            fuzzy_plate=vote.fuzzy_plate,
-            enable_fuzzy_match=cfg.enable_fuzzy_match,
+        should_open, reason_code = stages.evaluate_decision(
+            vote_or_detection=vote,
+            db=db,
+            cfg=cfg,
+            is_fast_open=False,
         )
-        should_open = whitelisted
-        decision_reason = "open_approved" if should_open else "not_whitelisted"
 
         result.frame_last_decision = "open" if should_open else "deny"
         result.frame_last_plate = vote.plate
-        result.frame_last_reason = decision_reason
+        result.frame_last_reason = reason_code
         result.frame_last_zone = detection.zone_name
         result.snapshot_source_detection = detection
 
-        db.record_event(
-            occurred_at=detection.detected_at,
-            frame_id=detection.frame_id,
-            raw_plate=detection.raw_text,
-            plate=vote.plate,
-            fuzzy_plate=vote.fuzzy_plate,
-            detection_confidence=detection.detection_confidence,
-            ocr_confidence=detection.ocr_confidence,
-            vote_confirmations=vote.confirmations,
-            vote_avg_confidence=vote.avg_confidence,
-            zone_id=detection.zone_id,
-            zone_name=detection.zone_name,
+        stages.record_decision_event(
+            detection=detection,
+            vote=vote,
             decision=result.frame_last_decision,
-            reason_code=decision_reason,
+            reason_code=reason_code,
+            db=db,
         )
 
         LOG.info(
@@ -348,14 +280,13 @@ def _handle_detections(
             vote.confirmations,
             vote.avg_confidence,
             result.frame_last_decision,
-            decision_reason,
+            reason_code,
         )
 
-        _try_open_zone(
+        stages.execute_barrier_action(
             should_open=should_open,
-            zone_id=detection.zone_id,
-            plate=vote.plate,
-            reason=decision_reason,
+            detection=detection,
+            reason_code=reason_code,
             barrier=barrier,
             cfg=cfg,
             zone_states=zone_states,
