@@ -1,10 +1,8 @@
 from __future__ import annotations
 
-import json
 import logging
-import os
-import re
 import time
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from uuid import uuid4
 
@@ -18,11 +16,31 @@ from .config import Settings
 from .db import Database
 from .motion_detector import has_motion_in_zone
 from .onec_provider import WhitelistProvider, create_whitelist_provider
-from .types import VoteOutcome
+from .preview_pipeline import write_preview_artifacts, write_recognition_snapshot
+from .runtime_state import ZoneRuntimeState
+from .types import PlateDetection, VoteOutcome
 from .voting import TemporalVoter
 from .zones import crop_zone, draw_zones, paste_zone_image
 
 LOG = logging.getLogger(__name__)
+
+
+@dataclass
+class FrameStageContext:
+    now: datetime
+    frame_id: str
+    active_zones: list[dict[str, object]]
+    active_zones_by_id: dict[int, dict[str, object]]
+    skip_alpr_this_frame: bool
+
+
+@dataclass
+class DetectionStageResult:
+    frame_last_decision: str | None
+    frame_last_plate: str | None
+    frame_last_reason: str | None
+    frame_last_zone: str | None
+    snapshot_source_detection: PlateDetection | None
 
 
 def _sync_whitelist(db: Database, provider: WhitelistProvider, cfg: Settings) -> None:
@@ -37,132 +55,335 @@ def _sync_whitelist(db: Database, provider: WhitelistProvider, cfg: Settings) ->
     LOG.info("Whitelist synced from %s: %s plates", provider.source, count)
 
 
-def _write_preview_artifacts(
+def _close_expired_zones(
     *,
-    image,
-    image_path: str,
-    meta_path: str,
-    captured_at: datetime,
-    has_detections: bool,
-    last_plate: str | None,
-    last_decision: str | None,
-    jpeg_quality: int,
+    zone_states: dict[int | None, ZoneRuntimeState],
+    barrier: BarrierController,
+    now_monotonic: float,
 ) -> None:
-    os.makedirs(os.path.dirname(image_path), exist_ok=True)
-    os.makedirs(os.path.dirname(meta_path), exist_ok=True)
+    for zone_id, state in zone_states.items():
+        deadline = state.close_deadline_monotonic
+        if deadline is None or now_monotonic < deadline:
+            continue
 
-    quality = max(40, min(100, int(jpeg_quality)))
-    ok, encoded = cv2.imencode(".jpg", image, [int(cv2.IMWRITE_JPEG_QUALITY), quality])
-    if not ok:
-        raise RuntimeError("Failed to encode preview image")
+        try:
+            barrier.close(reason="auto_close_timer", plate=state.last_plate, zone_id=zone_id)
+        except Exception as exc:  # noqa: BLE001
+            LOG.warning(
+                "Barrier close call failed plate=%s zone=%s reason=auto_close_timer: %s",
+                state.last_plate,
+                zone_id if zone_id is not None else "full",
+                exc,
+            )
+        finally:
+            state.clear()
 
-    with open(image_path, "wb") as image_file:
-        image_file.write(encoded.tobytes())
 
-    payload = {
-        "captured_at": captured_at.isoformat(),
-        "has_detections": has_detections,
-        "last_plate": last_plate,
-        "last_decision": last_decision,
+def _process_frame(
+    *,
+    frame,
+    prev_frame,
+    db: Database,
+    cfg: Settings,
+    last_no_zone_warning_ts: float,
+) -> tuple[FrameStageContext | None, float]:
+    now = datetime.now(timezone.utc)
+    frame_id = uuid4().hex
+    active_zones = db.get_zones(include_disabled=False)[:3]
+
+    if not active_zones:
+        now_monotonic = time.monotonic()
+        if now_monotonic - last_no_zone_warning_ts >= 30.0:
+            LOG.warning(
+                "No active zones configured. ALPR and barrier actions are paused until zones are defined"
+            )
+            last_no_zone_warning_ts = now_monotonic
+        return None, last_no_zone_warning_ts
+
+    skip_alpr_this_frame = False
+    if cfg.motion_detection_enabled and prev_frame is not None:
+        zones_with_motion = []
+        for zone in active_zones:
+            if has_motion_in_zone(
+                prev_frame,
+                frame,
+                zone,
+                threshold=cfg.motion_threshold_percent,
+                blur_kernel=cfg.motion_blur_kernel,
+            ):
+                zones_with_motion.append(zone)
+
+        if not zones_with_motion:
+            LOG.debug("No motion in any zone, skipping ALPR")
+            skip_alpr_this_frame = True
+
+        if zones_with_motion:
+            active_zones = zones_with_motion
+
+    active_zones_by_id = {
+        int(zone["id"]): zone
+        for zone in active_zones
+        if zone.get("id") is not None
     }
-    with open(meta_path, "w", encoding="utf-8") as meta_file:
-        json.dump(payload, meta_file, ensure_ascii=False)
+    return (
+        FrameStageContext(
+            now=now,
+            frame_id=frame_id,
+            active_zones=active_zones,
+            active_zones_by_id=active_zones_by_id,
+            skip_alpr_this_frame=skip_alpr_this_frame,
+        ),
+        last_no_zone_warning_ts,
+    )
 
 
-def _safe_file_segment(value: str | None, fallback: str = "unknown") -> str:
-    raw = (value or "").strip()
-    if not raw:
-        return fallback
-
-    cleaned = re.sub(r"[^A-Za-z0-9_-]+", "_", raw).strip("_")
-    return cleaned if cleaned else fallback
-
-
-def _prune_old_snapshots(directory: str, max_files: int) -> None:
-    if max_files <= 0:
-        return
-
-    entries: list[tuple[float, str]] = []
-    for name in os.listdir(directory):
-        if not name.lower().endswith(".jpg"):
-            continue
-        path = os.path.join(directory, name)
-        try:
-            entries.append((os.path.getmtime(path), path))
-        except OSError:
-            continue
-
-    if len(entries) <= max_files:
-        return
-
-    entries.sort(key=lambda item: item[0])
-    for _, path in entries[: len(entries) - max_files]:
-        try:
-            os.remove(path)
-        except OSError:
-            continue
-
-
-def _write_recognition_snapshot(
+def _detect_in_zones(
     *,
     frame,
     alpr: AlprService,
-    captured_at: datetime,
-    frame_id: str,
-    plate: str | None,
-    decision: str | None,
-    reason_code: str | None,
-    zone_name: str | None,
-    output_dir: str,
-    jpeg_quality: int,
-    max_files: int,
-    zones: list[dict[str, object]] | None = None,
-    highlight_zone_id: int | None = None,
-    apply_alpr_predictions: bool = True,
-) -> None:
-    os.makedirs(output_dir, exist_ok=True)
+    stage: FrameStageContext,
+) -> tuple[list[PlateDetection], dict[int, np.ndarray]]:
+    detections: list[PlateDetection] = []
+    zone_frames: dict[int, np.ndarray] = {}
 
-    annotated = frame
-    if apply_alpr_predictions:
+    if stage.skip_alpr_this_frame or not stage.active_zones:
+        return detections, zone_frames
+
+    for zone in stage.active_zones:
         try:
-            annotated, _ = alpr.draw_predictions(frame)
+            zone_frame = crop_zone(frame, zone)
         except Exception as exc:  # noqa: BLE001
-            LOG.warning("Snapshot draw_predictions failed, saving raw frame: %s", exc)
+            LOG.warning("Failed to crop zone %s: %s", zone.get("name"), exc)
+            continue
 
-    if zones is not None:
-        annotated = draw_zones(annotated, zones, highlight_zone_id=highlight_zone_id)
+        zone_id = int(zone.get("id")) if zone.get("id") is not None else None
+        if zone_id is not None:
+            zone_frames[zone_id] = zone_frame
 
-    overlay = (
-        f"{captured_at.strftime('%Y-%m-%d %H:%M:%S')} | "
-        f"plate={plate or '-'} | zone={zone_name or 'full'} | decision={decision} | reason={reason_code or '-'}"
+        detections.extend(
+            alpr.detect(
+                zone_frame,
+                detected_at=stage.now,
+                frame_id=stage.frame_id,
+                zone_id=zone_id,
+                zone_name=str(zone.get("name") or ""),
+            )
+        )
+
+    return detections, zone_frames
+
+
+def _try_open_zone(
+    *,
+    should_open: bool,
+    zone_id: int | None,
+    plate: str,
+    reason: str,
+    barrier: BarrierController,
+    cfg: Settings,
+    zone_states: dict[int | None, ZoneRuntimeState],
+) -> None:
+    if not should_open:
+        return
+
+    state = zone_states.setdefault(zone_id, ZoneRuntimeState())
+    if state.is_open:
+        return
+
+    opened = False
+    try:
+        opened = barrier.open(plate, reason, zone_id=zone_id)
+    except Exception as exc:  # noqa: BLE001
+        LOG.warning(
+            "Barrier open call failed plate=%s zone=%s reason=%s: %s",
+            plate,
+            zone_id if zone_id is not None else "full",
+            reason,
+            exc,
+        )
+
+    if opened:
+        now_monotonic = time.monotonic()
+        close_delay = max(0.1, cfg.get_zone_close_delay_sec(zone_id))
+        state.mark_open(plate=plate, now_monotonic=now_monotonic, close_delay_sec=close_delay)
+
+
+def _handle_detections(
+    *,
+    detections: list[PlateDetection],
+    db: Database,
+    cfg: Settings,
+    voters: dict[str, TemporalVoter],
+    barrier: BarrierController,
+    zone_states: dict[int | None, ZoneRuntimeState],
+) -> DetectionStageResult:
+    result = DetectionStageResult(
+        frame_last_decision=None,
+        frame_last_plate=None,
+        frame_last_reason=None,
+        frame_last_zone=None,
+        snapshot_source_detection=detections[0] if detections else None,
     )
-    cv2.putText(
-        annotated,
-        overlay,
-        (12, 28),
-        cv2.FONT_HERSHEY_SIMPLEX,
-        0.7,
-        (0, 255, 255),
-        2,
-        cv2.LINE_AA,
-    )
 
-    quality = max(40, min(100, int(jpeg_quality)))
-    ok, encoded = cv2.imencode(".jpg", annotated, [int(cv2.IMWRITE_JPEG_QUALITY), quality])
-    if not ok:
-        raise RuntimeError("Failed to encode recognition snapshot")
+    for detection in detections:
+        db.record_event(
+            occurred_at=detection.detected_at,
+            frame_id=detection.frame_id,
+            raw_plate=detection.raw_text,
+            plate=detection.normalized_text,
+            fuzzy_plate=detection.fuzzy_text,
+            detection_confidence=detection.detection_confidence,
+            ocr_confidence=detection.ocr_confidence,
+            zone_id=detection.zone_id,
+            zone_name=detection.zone_name,
+            decision="observed",
+            reason_code="raw_detection",
+        )
 
-    timestamp = captured_at.strftime("%Y%m%d_%H%M%S_%f")
-    frame_part = _safe_file_segment(frame_id, fallback="frame")
-    plate_part = _safe_file_segment(plate)
-    decision_part = _safe_file_segment(decision, fallback="observed")
-    filename = f"{timestamp}_{frame_part}_{plate_part}_{decision_part}.jpg"
-    out_path = os.path.join(output_dir, filename)
+        if cfg.fast_open_enabled and detection.ocr_confidence >= cfg.fast_open_confidence:
+            fast_vote = VoteOutcome(
+                plate=detection.normalized_text,
+                fuzzy_plate=detection.fuzzy_text,
+                confirmations=1,
+                avg_confidence=detection.ocr_confidence,
+                window_sec=cfg.voting_window_sec,
+            )
+            whitelisted = db.is_whitelisted(
+                plate=fast_vote.plate,
+                fuzzy_plate=fast_vote.fuzzy_plate,
+                enable_fuzzy_match=cfg.enable_fuzzy_match,
+            )
+            should_open = whitelisted
+            decision_reason = "open_approved" if should_open else "not_whitelisted"
 
-    with open(out_path, "wb") as out_file:
-        out_file.write(encoded.tobytes())
+            result.frame_last_decision = "open" if should_open else "deny"
+            result.frame_last_plate = fast_vote.plate
+            result.frame_last_reason = f"fast_{decision_reason}"
+            result.frame_last_zone = detection.zone_name
+            result.snapshot_source_detection = detection
 
-    _prune_old_snapshots(output_dir, max_files=max_files)
+            db.record_event(
+                occurred_at=detection.detected_at,
+                frame_id=detection.frame_id,
+                raw_plate=detection.raw_text,
+                plate=fast_vote.plate,
+                fuzzy_plate=fast_vote.fuzzy_plate,
+                detection_confidence=detection.detection_confidence,
+                ocr_confidence=detection.ocr_confidence,
+                vote_confirmations=fast_vote.confirmations,
+                vote_avg_confidence=fast_vote.avg_confidence,
+                zone_id=detection.zone_id,
+                zone_name=detection.zone_name,
+                decision=result.frame_last_decision,
+                reason_code=result.frame_last_reason,
+            )
+
+            LOG.info(
+                "Fast decision plate=%s ocr_conf=%.3f det_conf=%.3f decision=%s reason=%s",
+                fast_vote.plate,
+                detection.ocr_confidence,
+                detection.detection_confidence,
+                result.frame_last_decision,
+                result.frame_last_reason,
+            )
+
+            _try_open_zone(
+                should_open=should_open,
+                zone_id=detection.zone_id,
+                plate=fast_vote.plate,
+                reason=result.frame_last_reason,
+                barrier=barrier,
+                cfg=cfg,
+                zone_states=zone_states,
+            )
+            continue
+
+        voter_key = f"zone:{detection.zone_id}" if detection.zone_id is not None else "full"
+        voter = voters.get(voter_key)
+        if voter is None:
+            voter = TemporalVoter(
+                window_sec=cfg.voting_window_sec,
+                min_confirmations=cfg.min_confirmations,
+                min_avg_confidence=cfg.min_avg_confidence,
+            )
+            voters[voter_key] = voter
+
+        vote = voter.observe(detection)
+        if vote is None:
+            continue
+
+        whitelisted = db.is_whitelisted(
+            plate=vote.plate,
+            fuzzy_plate=vote.fuzzy_plate,
+            enable_fuzzy_match=cfg.enable_fuzzy_match,
+        )
+        should_open = whitelisted
+        decision_reason = "open_approved" if should_open else "not_whitelisted"
+
+        result.frame_last_decision = "open" if should_open else "deny"
+        result.frame_last_plate = vote.plate
+        result.frame_last_reason = decision_reason
+        result.frame_last_zone = detection.zone_name
+        result.snapshot_source_detection = detection
+
+        db.record_event(
+            occurred_at=detection.detected_at,
+            frame_id=detection.frame_id,
+            raw_plate=detection.raw_text,
+            plate=vote.plate,
+            fuzzy_plate=vote.fuzzy_plate,
+            detection_confidence=detection.detection_confidence,
+            ocr_confidence=detection.ocr_confidence,
+            vote_confirmations=vote.confirmations,
+            vote_avg_confidence=vote.avg_confidence,
+            zone_id=detection.zone_id,
+            zone_name=detection.zone_name,
+            decision=result.frame_last_decision,
+            reason_code=decision_reason,
+        )
+
+        LOG.info(
+            "Decision plate=%s confirmations=%s avg_conf=%.3f decision=%s reason=%s",
+            vote.plate,
+            vote.confirmations,
+            vote.avg_confidence,
+            result.frame_last_decision,
+            decision_reason,
+        )
+
+        _try_open_zone(
+            should_open=should_open,
+            zone_id=detection.zone_id,
+            plate=vote.plate,
+            reason=decision_reason,
+            barrier=barrier,
+            cfg=cfg,
+            zone_states=zone_states,
+        )
+
+    return result
+
+
+def _refresh_zone_hold(
+    *,
+    detections: list[PlateDetection],
+    cfg: Settings,
+    zone_states: dict[int | None, ZoneRuntimeState],
+    now_monotonic: float,
+) -> None:
+    for detection in detections:
+        zone_id = detection.zone_id
+        state = zone_states.get(zone_id)
+        if state is None or not state.is_open:
+            continue
+
+        close_delay = max(0.1, cfg.get_zone_close_delay_sec(zone_id))
+        hold_plate = detection.normalized_text or detection.raw_text or state.last_plate
+        state.refresh_hold(
+            plate=hold_plate,
+            now_monotonic=now_monotonic,
+            close_delay_sec=close_delay,
+        )
 
 
 def run(settings: Settings | None = None) -> None:
@@ -216,32 +437,11 @@ def run(settings: Settings | None = None) -> None:
         cfg.barrier_action_mode,
         provider.source,
     )
+
     last_preview_write_ts = 0.0
     prev_frame: np.ndarray | None = None
-    pending_close_at_by_zone: dict[int | None, float] = {}
-    pending_close_plate_by_zone: dict[int | None, str] = {}
+    zone_states: dict[int | None, ZoneRuntimeState] = {}
     last_no_zone_warning_ts = 0.0
-
-    def close_expired_barriers(now_monotonic: float) -> None:
-        expired_zone_ids = [
-            zone_id
-            for zone_id, close_at in pending_close_at_by_zone.items()
-            if now_monotonic >= close_at
-        ]
-        for zone_id in expired_zone_ids:
-            close_plate = pending_close_plate_by_zone.get(zone_id)
-            try:
-                barrier.close(reason="auto_close_timer", plate=close_plate, zone_id=zone_id)
-            except Exception as exc:  # noqa: BLE001
-                LOG.warning(
-                    "Barrier close call failed plate=%s zone=%s reason=auto_close_timer: %s",
-                    close_plate,
-                    zone_id if zone_id is not None else "full",
-                    exc,
-                )
-            finally:
-                pending_close_at_by_zone.pop(zone_id, None)
-                pending_close_plate_by_zone.pop(zone_id, None)
 
     try:
         while True:
@@ -253,279 +453,67 @@ def run(settings: Settings | None = None) -> None:
 
             frame = camera.fetch_frame()
             if frame is None:
-                close_expired_barriers(time.monotonic())
+                _close_expired_zones(
+                    zone_states=zone_states,
+                    barrier=barrier,
+                    now_monotonic=time.monotonic(),
+                )
                 time.sleep(cfg.poll_interval_sec)
                 continue
 
-            skip_alpr_this_frame = False
-            now = datetime.now(timezone.utc)
-            frame_id = uuid4().hex
-            active_zones = db.get_zones(include_disabled=False)[:3]
-
-            if not active_zones:
-                now_monotonic = time.monotonic()
-                if now_monotonic - last_no_zone_warning_ts >= 30.0:
-                    LOG.warning(
-                        "No active zones configured. ALPR and barrier actions are paused until zones are defined"
-                    )
-                    last_no_zone_warning_ts = now_monotonic
-                close_expired_barriers(now_monotonic)
+            stage, last_no_zone_warning_ts = _process_frame(
+                frame=frame,
+                prev_frame=prev_frame,
+                db=db,
+                cfg=cfg,
+                last_no_zone_warning_ts=last_no_zone_warning_ts,
+            )
+            if stage is None:
+                _close_expired_zones(
+                    zone_states=zone_states,
+                    barrier=barrier,
+                    now_monotonic=time.monotonic(),
+                )
                 prev_frame = frame
                 time.sleep(cfg.poll_interval_sec)
                 continue
 
-            # Motion-gated ALPR: skip expensive inference if no motion detected
-            if cfg.motion_detection_enabled and prev_frame is not None:
-                # Per-zone motion check: only process zones with motion.
-                zones_with_motion = []
-                for zone in active_zones:
-                    if has_motion_in_zone(
-                        prev_frame,
-                        frame,
-                        zone,
-                        threshold=cfg.motion_threshold_percent,
-                        blur_kernel=cfg.motion_blur_kernel,
-                    ):
-                        zones_with_motion.append(zone)
+            detections, zone_frames = _detect_in_zones(
+                frame=frame,
+                alpr=alpr,
+                stage=stage,
+            )
 
-                if not zones_with_motion:
-                    # No motion in any zone, skip ALPR this frame
-                    LOG.debug("No motion in any zone, skipping ALPR")
-                    skip_alpr_this_frame = True
+            detection_result = _handle_detections(
+                detections=detections,
+                db=db,
+                cfg=cfg,
+                voters=voters,
+                barrier=barrier,
+                zone_states=zone_states,
+            )
 
-                # Filter to only zones with motion
-                if zones_with_motion:
-                    active_zones = zones_with_motion
+            _refresh_zone_hold(
+                detections=detections,
+                cfg=cfg,
+                zone_states=zone_states,
+                now_monotonic=time.monotonic(),
+            )
+            _close_expired_zones(
+                zone_states=zone_states,
+                barrier=barrier,
+                now_monotonic=time.monotonic(),
+            )
 
-            active_zones_by_id: dict[int, dict[str, object]] = {
-                int(zone["id"]): zone for zone in active_zones if zone.get("id") is not None
-            }
-
-            detections = []
-            zone_frames: dict[int, np.ndarray] = {}
-            if not skip_alpr_this_frame and active_zones:
-                for zone in active_zones:
-                    try:
-                        zone_frame = crop_zone(frame, zone)
-                    except Exception as exc:  # noqa: BLE001
-                        LOG.warning("Failed to crop zone %s: %s", zone.get("name"), exc)
-                        continue
-
-                    zone_id = int(zone.get("id")) if zone.get("id") is not None else None
-                    if zone_id is not None:
-                        zone_frames[zone_id] = zone_frame
-
-                    detections.extend(
-                        alpr.detect(
-                            zone_frame,
-                            detected_at=now,
-                            frame_id=frame_id,
-                            zone_id=zone_id,
-                            zone_name=str(zone.get("name") or ""),
-                        )
-                    )
-
-            frame_last_decision: str | None = None
-            frame_last_plate: str | None = None
-            frame_last_reason: str | None = None
-            frame_last_zone: str | None = None
-            snapshot_source_detection = detections[0] if detections else None
-
-            if detections:
-                for detection in detections:
-                    db.record_event(
-                        occurred_at=detection.detected_at,
-                        frame_id=detection.frame_id,
-                        raw_plate=detection.raw_text,
-                        plate=detection.normalized_text,
-                        fuzzy_plate=detection.fuzzy_text,
-                        detection_confidence=detection.detection_confidence,
-                        ocr_confidence=detection.ocr_confidence,
-                        zone_id=detection.zone_id,
-                        zone_name=detection.zone_name,
-                        decision="observed",
-                        reason_code="raw_detection",
-                    )
-
-                    # Fast-path for very confident OCR: decide immediately.
-                    if cfg.fast_open_enabled and detection.ocr_confidence >= cfg.fast_open_confidence:
-                        fast_vote = VoteOutcome(
-                            plate=detection.normalized_text,
-                            fuzzy_plate=detection.fuzzy_text,
-                            confirmations=1,
-                            avg_confidence=detection.ocr_confidence,
-                            window_sec=cfg.voting_window_sec,
-                        )
-                        whitelisted = db.is_whitelisted(
-                            plate=fast_vote.plate,
-                            fuzzy_plate=fast_vote.fuzzy_plate,
-                            enable_fuzzy_match=cfg.enable_fuzzy_match,
-                        )
-                        should_open = whitelisted
-                        decision_reason = "open_approved" if should_open else "not_whitelisted"
-                        frame_last_decision = "open" if should_open else "deny"
-                        frame_last_plate = fast_vote.plate
-                        frame_last_reason = f"fast_{decision_reason}"
-                        frame_last_zone = detection.zone_name
-                        snapshot_source_detection = detection
-
-                        db.record_event(
-                            occurred_at=detection.detected_at,
-                            frame_id=detection.frame_id,
-                            raw_plate=detection.raw_text,
-                            plate=fast_vote.plate,
-                            fuzzy_plate=fast_vote.fuzzy_plate,
-                            detection_confidence=detection.detection_confidence,
-                            ocr_confidence=detection.ocr_confidence,
-                            vote_confirmations=fast_vote.confirmations,
-                            vote_avg_confidence=fast_vote.avg_confidence,
-                            zone_id=detection.zone_id,
-                            zone_name=detection.zone_name,
-                            decision=frame_last_decision,
-                            reason_code=frame_last_reason,
-                        )
-
-                        LOG.info(
-                            "Fast decision plate=%s ocr_conf=%.3f det_conf=%.3f decision=%s reason=%s",
-                            fast_vote.plate,
-                            detection.ocr_confidence,
-                            detection.detection_confidence,
-                            frame_last_decision,
-                            frame_last_reason,
-                        )
-
-                        if should_open:
-                            zone_id = detection.zone_id
-                            if zone_id in pending_close_at_by_zone:
-                                # Already open in this zone: do not send duplicate open command.
-                                continue
-
-                            opened = False
-                            try:
-                                opened = barrier.open(
-                                    fast_vote.plate,
-                                    frame_last_reason,
-                                    zone_id=zone_id,
-                                )
-                            except Exception as exc:  # noqa: BLE001
-                                LOG.warning(
-                                    "Barrier open call failed plate=%s zone=%s reason=%s: %s",
-                                    fast_vote.plate,
-                                    zone_id if zone_id is not None else "full",
-                                    frame_last_reason,
-                                    exc,
-                                )
-                            if opened:
-                                close_delay = max(0.1, cfg.get_zone_close_delay_sec(zone_id))
-                                pending_close_at_by_zone[zone_id] = time.monotonic() + close_delay
-                                pending_close_plate_by_zone[zone_id] = fast_vote.plate
-                        continue
-
-                    voter_key = f"zone:{detection.zone_id}" if detection.zone_id is not None else "full"
-                    voter = voters.get(voter_key)
-                    if voter is None:
-                        voter = TemporalVoter(
-                            window_sec=cfg.voting_window_sec,
-                            min_confirmations=cfg.min_confirmations,
-                            min_avg_confidence=cfg.min_avg_confidence,
-                        )
-                        voters[voter_key] = voter
-
-                    vote = voter.observe(detection)
-                    if vote is None:
-                        continue
-
-                    whitelisted = db.is_whitelisted(
-                        plate=vote.plate,
-                        fuzzy_plate=vote.fuzzy_plate,
-                        enable_fuzzy_match=cfg.enable_fuzzy_match,
-                    )
-                    should_open = whitelisted
-                    decision_reason = "open_approved" if should_open else "not_whitelisted"
-                    frame_last_decision = "open" if should_open else "deny"
-                    frame_last_plate = vote.plate
-                    frame_last_reason = decision_reason
-                    frame_last_zone = detection.zone_name
-                    snapshot_source_detection = detection
-
-                    db.record_event(
-                        occurred_at=detection.detected_at,
-                        frame_id=detection.frame_id,
-                        raw_plate=detection.raw_text,
-                        plate=vote.plate,
-                        fuzzy_plate=vote.fuzzy_plate,
-                        detection_confidence=detection.detection_confidence,
-                        ocr_confidence=detection.ocr_confidence,
-                        vote_confirmations=vote.confirmations,
-                        vote_avg_confidence=vote.avg_confidence,
-                        zone_id=detection.zone_id,
-                        zone_name=detection.zone_name,
-                        decision=frame_last_decision,
-                        reason_code=decision_reason,
-                    )
-
-                    LOG.info(
-                        "Decision plate=%s confirmations=%s avg_conf=%.3f decision=%s reason=%s",
-                        vote.plate,
-                        vote.confirmations,
-                        vote.avg_confidence,
-                        frame_last_decision,
-                        decision_reason,
-                    )
-
-                    if should_open:
-                        zone_id = detection.zone_id
-                        if zone_id in pending_close_at_by_zone:
-                            # Already open in this zone: do not send duplicate open command.
-                            continue
-
-                        opened = False
-                        try:
-                            opened = barrier.open(
-                                vote.plate,
-                                decision_reason,
-                                zone_id=zone_id,
-                            )
-                        except Exception as exc:  # noqa: BLE001
-                            LOG.warning(
-                                "Barrier open call failed plate=%s zone=%s reason=%s: %s",
-                                vote.plate,
-                                zone_id if zone_id is not None else "full",
-                                decision_reason,
-                                exc,
-                            )
-                        if opened:
-                            close_delay = max(0.1, cfg.get_zone_close_delay_sec(zone_id))
-                            pending_close_at_by_zone[zone_id] = time.monotonic() + close_delay
-                            pending_close_plate_by_zone[zone_id] = vote.plate
-
-            if detections:
-                for detection in detections:
-                    zone_id = detection.zone_id
-                    if zone_id not in pending_close_at_by_zone:
-                        continue
-                    # Safety hold per zone: while any plate is visible in zone, keep that zone open.
-                    close_delay = max(0.1, cfg.get_zone_close_delay_sec(zone_id))
-                    pending_close_at_by_zone[zone_id] = time.monotonic() + close_delay
-                    if detection.normalized_text:
-                        pending_close_plate_by_zone[zone_id] = detection.normalized_text
-                    elif detection.raw_text:
-                        pending_close_plate_by_zone[zone_id] = detection.raw_text
-
-            close_expired_barriers(time.monotonic())
-
-            if (
-                cfg.recognition_snapshot_enabled
-                and detections
-            ):
+            if cfg.recognition_snapshot_enabled and detections:
                 try:
-                    detection_for_snapshot = snapshot_source_detection or detections[0]
+                    detection_for_snapshot = detection_result.snapshot_source_detection or detections[0]
                     selected_zone = None
                     if detection_for_snapshot.zone_id is not None:
-                        selected_zone = active_zones_by_id.get(detection_for_snapshot.zone_id)
+                        selected_zone = stage.active_zones_by_id.get(detection_for_snapshot.zone_id)
 
                     primary_plate = (
-                        frame_last_plate
+                        detection_result.frame_last_plate
                         or detection_for_snapshot.normalized_text
                         or detection_for_snapshot.raw_text
                     )
@@ -542,18 +530,21 @@ def run(settings: Settings | None = None) -> None:
                             snapshot_frame = paste_zone_image(snapshot_frame, selected_zone, annotated_zone_image)
                             apply_alpr_predictions = False
                         except Exception as exc:  # noqa: BLE001
-                            LOG.warning("Failed to annotate zone snapshot, falling back to full-frame snapshot: %s", exc)
+                            LOG.warning(
+                                "Failed to annotate zone snapshot, falling back to full-frame snapshot: %s",
+                                exc,
+                            )
 
-                    _write_recognition_snapshot(
+                    write_recognition_snapshot(
                         frame=snapshot_frame,
                         alpr=alpr,
-                        captured_at=now,
+                        captured_at=stage.now,
                         frame_id=detection_for_snapshot.frame_id,
                         plate=primary_plate,
-                        decision=frame_last_decision,
-                        reason_code=frame_last_reason or "raw_detection",
+                        decision=detection_result.frame_last_decision,
+                        reason_code=detection_result.frame_last_reason or "raw_detection",
                         zone_name=detection_for_snapshot.zone_name,
-                        zones=active_zones,
+                        zones=stage.active_zones,
                         highlight_zone_id=detection_for_snapshot.zone_id,
                         apply_alpr_predictions=apply_alpr_predictions,
                         output_dir=cfg.recognition_snapshot_dir,
@@ -570,7 +561,7 @@ def run(settings: Settings | None = None) -> None:
 
                     annotated = frame
                     preview_plates = [d.normalized_text for d in detections if d.normalized_text]
-                    if not skip_alpr_this_frame:
+                    if not stage.skip_alpr_this_frame:
                         try:
                             annotated, draw_plates = alpr.draw_predictions(frame)
                             if draw_plates:
@@ -578,11 +569,13 @@ def run(settings: Settings | None = None) -> None:
                         except Exception as exc:  # noqa: BLE001
                             LOG.warning("Preview draw_predictions failed, using raw frame: %s", exc)
 
-                    if active_zones:
-                        annotated = draw_zones(annotated, active_zones)
+                    if stage.active_zones:
+                        annotated = draw_zones(annotated, stage.active_zones)
 
-                    preview_status = "detect" if detections else ("idle-motion-skip" if skip_alpr_this_frame else "idle")
-                    preview_overlay = f"{now.strftime('%Y-%m-%d %H:%M:%S')} | status={preview_status}"
+                    preview_status = "detect" if detections else (
+                        "idle-motion-skip" if stage.skip_alpr_this_frame else "idle"
+                    )
+                    preview_overlay = f"{stage.now.strftime('%Y-%m-%d %H:%M:%S')} | status={preview_status}"
                     cv2.putText(
                         annotated,
                         preview_overlay,
@@ -594,14 +587,14 @@ def run(settings: Settings | None = None) -> None:
                         cv2.LINE_AA,
                     )
 
-                    _write_preview_artifacts(
+                    write_preview_artifacts(
                         image=annotated,
                         image_path=cfg.preview_image_path,
                         meta_path=cfg.preview_meta_path,
-                        captured_at=now,
+                        captured_at=stage.now,
                         has_detections=bool(detections),
                         last_plate=preview_plates[0] if preview_plates else None,
-                        last_decision=frame_last_decision,
+                        last_decision=detection_result.frame_last_decision,
                         jpeg_quality=cfg.preview_jpeg_quality,
                     )
 
