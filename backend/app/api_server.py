@@ -115,9 +115,14 @@ def dashboard() -> dict[str, object]:
             "zone2_barrier_configured": cfg.has_zone_barrier_entities(2),
             "zone1_close_delay_sec": cfg.get_zone_close_delay_sec(1),
             "zone2_close_delay_sec": cfg.get_zone_close_delay_sec(2),
-            "min_confirmations": cfg.min_confirmations,
-            "min_avg_confidence": cfg.min_avg_confidence,
-            "voting_window_sec": cfg.voting_window_sec,
+            "ocr_open_threshold": cfg.ocr_open_threshold,
+            "ocr_extend_threshold": cfg.ocr_extend_threshold,
+            "two_shot_gap_ms": cfg.two_shot_gap_ms,
+            "two_shot_max_pairs": cfg.two_shot_max_pairs,
+            # Legacy fields retained for frontend compatibility.
+            "min_confirmations": 2,
+            "min_avg_confidence": cfg.ocr_open_threshold,
+            "voting_window_sec": cfg.two_shot_gap_ms / 1000.0,
         },
         "sync": {
             "source": provider.source,

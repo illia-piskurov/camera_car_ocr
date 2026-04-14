@@ -20,11 +20,21 @@ from .pipeline_state import PipelineState
 from .preview_pipeline import write_preview_artifacts, write_recognition_snapshot
 from .runtime_state import ZoneRuntimeState
 from .types import PlateDetection
-from .voting import TemporalVoter
 from .zones import crop_zone, draw_zones, paste_zone_image
 from . import stages
 
 LOG = logging.getLogger(__name__)
+
+
+def _as_zone_id(value: object) -> int | None:
+    if isinstance(value, int):
+        return value
+    if isinstance(value, str):
+        try:
+            return int(value)
+        except ValueError:
+            return None
+    return None
 
 
 @dataclass
@@ -122,11 +132,11 @@ def _process_frame(
         if zones_with_motion:
             active_zones = zones_with_motion
 
-    active_zones_by_id = {
-        int(zone["id"]): zone
-        for zone in active_zones
-        if zone.get("id") is not None
-    }
+    active_zones_by_id = {}
+    for zone in active_zones:
+        zone_id = _as_zone_id(zone.get("id"))
+        if zone_id is not None:
+            active_zones_by_id[zone_id] = zone
     return FrameStageContext(
         now=now,
         frame_id=frame_id,
@@ -140,30 +150,32 @@ def _detect_in_zones(
     *,
     frame,
     alpr: AlprService,
-    stage: FrameStageContext,
+    detected_at: datetime,
+    frame_id: str,
+    active_zones: list[dict[str, object]],
 ) -> tuple[list[PlateDetection], dict[int, np.ndarray]]:
     detections: list[PlateDetection] = []
     zone_frames: dict[int, np.ndarray] = {}
 
-    if stage.skip_alpr_this_frame or not stage.active_zones:
+    if not active_zones:
         return detections, zone_frames
 
-    for zone in stage.active_zones:
+    for zone in active_zones:
         try:
             zone_frame = crop_zone(frame, zone)
         except Exception as exc:  # noqa: BLE001
             LOG.warning("Failed to crop zone %s: %s", zone.get("name"), exc)
             continue
 
-        zone_id = int(zone.get("id")) if zone.get("id") is not None else None
+        zone_id = _as_zone_id(zone.get("id"))
         if zone_id is not None:
             zone_frames[zone_id] = zone_frame
 
         detections.extend(
             alpr.detect(
                 zone_frame,
-                detected_at=stage.now,
-                frame_id=stage.frame_id,
+                detected_at=detected_at,
+                frame_id=frame_id,
                 zone_id=zone_id,
                 zone_name=str(zone.get("name") or ""),
             )
@@ -172,12 +184,65 @@ def _detect_in_zones(
     return detections, zone_frames
 
 
+def _select_two_shot_candidate(
+    *,
+    first: list[PlateDetection],
+    second: list[PlateDetection],
+    min_ocr_confidence: float,
+) -> PlateDetection | None:
+    """Select a confirmed detection present in both shots for the same zone.
+
+    Uses normalized plate text as the primary key and requires OCR confidence
+    threshold on both shots. If multiple candidates exist, prefers higher
+    minimum OCR confidence across the pair.
+    """
+    first_map: dict[tuple[int | None, str], PlateDetection] = {}
+    second_map: dict[tuple[int | None, str], PlateDetection] = {}
+
+    for item in first:
+        if item.ocr_confidence < min_ocr_confidence or not item.normalized_text:
+            continue
+        key = (item.zone_id, item.normalized_text)
+        current = first_map.get(key)
+        if current is None or item.ocr_confidence > current.ocr_confidence:
+            first_map[key] = item
+
+    for item in second:
+        if item.ocr_confidence < min_ocr_confidence or not item.normalized_text:
+            continue
+        key = (item.zone_id, item.normalized_text)
+        current = second_map.get(key)
+        if current is None or item.ocr_confidence > current.ocr_confidence:
+            second_map[key] = item
+
+    best: PlateDetection | None = None
+    best_pair_score = -1.0
+
+    for key, first_detection in first_map.items():
+        second_detection = second_map.get(key)
+        if second_detection is None:
+            continue
+
+        pair_score = min(first_detection.ocr_confidence, second_detection.ocr_confidence)
+        chosen = (
+            first_detection
+            if first_detection.ocr_confidence >= second_detection.ocr_confidence
+            else second_detection
+        )
+
+        if pair_score > best_pair_score:
+            best_pair_score = pair_score
+            best = chosen
+
+    return best
+
+
 def _handle_detections(
     *,
     detections: list[PlateDetection],
+    decision_detection: PlateDetection | None,
     db: Database,
     cfg: Settings,
-    voters: dict[str, TemporalVoter],
     barrier: BarrierController,
     zone_states: dict[int | None, ZoneRuntimeState],
 ) -> DetectionStageResult:
@@ -193,102 +258,50 @@ def _handle_detections(
         # Record raw detection event
         stages.record_decision_event(
             detection=detection,
-            vote=None,
             decision="observed",
             reason_code="raw_detection",
             db=db,
         )
 
-        # Route to fast-open or temporal voting
-        if cfg.fast_open_enabled and detection.ocr_confidence >= cfg.fast_open_confidence:
-            # Fast-open path: treat single high-confidence detection as immediate vote
-            should_open, reason_code = stages.evaluate_decision(
-                vote_or_detection=detection,
-                db=db,
-                cfg=cfg,
-                is_fast_open=True,
-            )
+    if decision_detection is None:
+        return result
 
-            result.frame_last_decision = "open" if should_open else "deny"
-            result.frame_last_plate = detection.normalized_text
-            result.frame_last_reason = reason_code
-            result.frame_last_zone = detection.zone_name
-            result.snapshot_source_detection = detection
+    should_open, reason_code = stages.evaluate_decision(
+        plate=decision_detection.normalized_text,
+        fuzzy_plate=decision_detection.fuzzy_text,
+        db=db,
+        cfg=cfg,
+    )
 
-            stages.record_decision_event(
-                detection=detection,
-                vote=None,
-                decision=result.frame_last_decision,
-                reason_code=reason_code,
-                db=db,
-            )
+    result.frame_last_decision = "open" if should_open else "deny"
+    result.frame_last_plate = decision_detection.normalized_text
+    result.frame_last_reason = reason_code
+    result.frame_last_zone = decision_detection.zone_name
+    result.snapshot_source_detection = decision_detection
 
-            LOG.info(
-                "Fast decision plate=%s ocr_conf=%.3f det_conf=%.3f decision=%s reason=%s",
-                detection.normalized_text,
-                detection.ocr_confidence,
-                detection.detection_confidence,
-                result.frame_last_decision,
-                reason_code,
-            )
+    stages.record_decision_event(
+        detection=decision_detection,
+        decision=result.frame_last_decision,
+        reason_code=reason_code,
+        db=db,
+    )
 
-            stages.execute_barrier_action(
-                should_open=should_open,
-                detection=detection,
-                reason_code=reason_code,
-                barrier=barrier,
-                cfg=cfg,
-                zone_states=zone_states,
-            )
-            continue
+    LOG.info(
+        "Decision plate=%s ocr_conf=%.3f decision=%s reason=%s",
+        decision_detection.normalized_text,
+        decision_detection.ocr_confidence,
+        result.frame_last_decision,
+        reason_code,
+    )
 
-        # Temporal voting path
-        vote = stages.apply_temporal_voting(
-            detection=detection,
-            voters=voters,
-            cfg=cfg,
-        )
-        if vote is None:
-            continue
-
-        should_open, reason_code = stages.evaluate_decision(
-            vote_or_detection=vote,
-            db=db,
-            cfg=cfg,
-            is_fast_open=False,
-        )
-
-        result.frame_last_decision = "open" if should_open else "deny"
-        result.frame_last_plate = vote.plate
-        result.frame_last_reason = reason_code
-        result.frame_last_zone = detection.zone_name
-        result.snapshot_source_detection = detection
-
-        stages.record_decision_event(
-            detection=detection,
-            vote=vote,
-            decision=result.frame_last_decision,
-            reason_code=reason_code,
-            db=db,
-        )
-
-        LOG.info(
-            "Decision plate=%s confirmations=%s avg_conf=%.3f decision=%s reason=%s",
-            vote.plate,
-            vote.confirmations,
-            vote.avg_confidence,
-            result.frame_last_decision,
-            reason_code,
-        )
-
-        stages.execute_barrier_action(
-            should_open=should_open,
-            detection=detection,
-            reason_code=reason_code,
-            barrier=barrier,
-            cfg=cfg,
-            zone_states=zone_states,
-        )
+    stages.execute_barrier_action(
+        should_open=should_open,
+        detection=decision_detection,
+        reason_code=reason_code,
+        barrier=barrier,
+        cfg=cfg,
+        zone_states=zone_states,
+    )
 
     return result
 
@@ -299,8 +312,15 @@ def _refresh_zone_hold(
     cfg: Settings,
     state: PipelineState,
     now_monotonic: float,
+    motion_detected: bool,
 ) -> None:
+    if not motion_detected:
+        return
+
     for detection in detections:
+        if detection.ocr_confidence < cfg.ocr_extend_threshold:
+            continue
+
         zone_id = detection.zone_id
         zone_state = state.zone_states.get(zone_id)
         if zone_state is None or not zone_state.is_open:
@@ -572,19 +592,55 @@ def run(settings: Settings | None = None) -> None:
                 time.sleep(cfg.poll_interval_sec)
                 continue
 
-            # Detect plates in zones
-            detections, zone_frames = _detect_in_zones(
-                frame=frame,
-                alpr=alpr,
-                stage=stage,
-            )
+            # Detect plates in zones using two-shot confirmation
+            detections: list[PlateDetection] = []
+            zone_frames: dict[int, np.ndarray] = {}
+            decision_detection: PlateDetection | None = None
+
+            if not stage.skip_alpr_this_frame:
+                first_detections, zone_frames = _detect_in_zones(
+                    frame=frame,
+                    alpr=alpr,
+                    detected_at=stage.now,
+                    frame_id=stage.frame_id,
+                    active_zones=stage.active_zones,
+                )
+                detections.extend(first_detections)
+
+                pair_detections = first_detections
+                max_pairs = max(1, cfg.two_shot_max_pairs)
+                for pair_index in range(max_pairs):
+                    time.sleep(max(0.0, cfg.two_shot_gap_ms / 1000.0))
+
+                    second_frame = camera.fetch_frame()
+                    if second_frame is None:
+                        break
+
+                    second_detections, _ = _detect_in_zones(
+                        frame=second_frame,
+                        alpr=alpr,
+                        detected_at=datetime.now(timezone.utc),
+                        frame_id=uuid4().hex,
+                        active_zones=stage.active_zones,
+                    )
+                    detections.extend(second_detections)
+
+                    decision_detection = _select_two_shot_candidate(
+                        first=pair_detections,
+                        second=second_detections,
+                        min_ocr_confidence=cfg.ocr_open_threshold,
+                    )
+                    if decision_detection is not None:
+                        break
+
+                    pair_detections = second_detections
 
             # Make decisions and act on detections
             detection_result = _handle_detections(
                 detections=detections,
+                decision_detection=decision_detection,
                 db=db,
                 cfg=cfg,
-                voters=state.voters,
                 barrier=barrier,
                 zone_states=state.zone_states,
             )
@@ -595,6 +651,7 @@ def run(settings: Settings | None = None) -> None:
                 cfg=cfg,
                 state=state,
                 now_monotonic=time.monotonic(),
+                motion_detected=(not cfg.motion_detection_enabled) or (not stage.skip_alpr_this_frame),
             )
             state.close_all_zones(barrier)
 

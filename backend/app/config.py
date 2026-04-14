@@ -63,6 +63,11 @@ class Settings:
     detector_model: str = "yolo-v9-t-384-license-plate-end2end"
     ocr_model: str = "global-plates-mobile-vit-v2-model"
 
+    ocr_open_threshold: float = 0.92
+    ocr_extend_threshold: float = 0.80
+    two_shot_gap_ms: int = 200
+    two_shot_max_pairs: int = 2
+
     voting_window_sec: float = 4.0
     min_confirmations: int = 2
     min_avg_confidence: float = 0.80
@@ -146,6 +151,16 @@ class Settings:
             request_retries=int(os.getenv("REQUEST_RETRIES", Settings.request_retries)),
             detector_model=os.getenv("DETECTOR_MODEL", Settings.detector_model),
             ocr_model=os.getenv("OCR_MODEL", Settings.ocr_model),
+            ocr_open_threshold=float(
+                os.getenv("OCR_OPEN_THRESHOLD", Settings.ocr_open_threshold)
+            ),
+            ocr_extend_threshold=float(
+                os.getenv("OCR_EXTEND_THRESHOLD", Settings.ocr_extend_threshold)
+            ),
+            two_shot_gap_ms=int(os.getenv("TWO_SHOT_GAP_MS", Settings.two_shot_gap_ms)),
+            two_shot_max_pairs=int(
+                os.getenv("TWO_SHOT_MAX_PAIRS", Settings.two_shot_max_pairs)
+            ),
             voting_window_sec=float(os.getenv("VOTING_WINDOW_SEC", Settings.voting_window_sec)),
             min_confirmations=int(os.getenv("MIN_CONFIRMATIONS", Settings.min_confirmations)),
             min_avg_confidence=float(os.getenv("MIN_AVG_CONFIDENCE", Settings.min_avg_confidence)),

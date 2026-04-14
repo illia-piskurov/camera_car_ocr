@@ -13,7 +13,6 @@ import numpy as np
 
 from .barrier import BarrierController
 from .runtime_state import ZoneRuntimeState
-from .voting import TemporalVoter
 
 
 @dataclass
@@ -25,7 +24,6 @@ class PipelineState:
     """
 
     zone_states: dict[int | None, ZoneRuntimeState] = field(default_factory=dict)
-    voters: dict[str, TemporalVoter] = field(default_factory=dict)
     last_preview_write_ts: float = 0.0
     last_no_zone_warning_ts: float = 0.0
     prev_frame: np.ndarray | None = None
@@ -73,7 +71,6 @@ class PipelineState:
         """
         return cls(
             zone_states={},
-            voters={},
             last_preview_write_ts=0.0,
             last_no_zone_warning_ts=0.0,
             prev_frame=None,
