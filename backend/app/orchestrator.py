@@ -197,7 +197,17 @@ def run(settings: Settings | None = None) -> None:
         plate_cooldown_sec=cfg.plate_cooldown_sec,
         global_cooldown_sec=cfg.global_cooldown_sec,
     )
-    barrier = BarrierController(dry_run=cfg.dry_run_open, action_mode=cfg.barrier_action_mode)
+    barrier = BarrierController(
+        dry_run=cfg.dry_run_open,
+        action_mode=cfg.barrier_action_mode,
+        ha_base_url=cfg.barrier_ha_base_url,
+        ha_token=cfg.barrier_ha_token,
+        open_entity_id=cfg.barrier_open_entity_id,
+        close_entity_id=cfg.barrier_close_entity_id,
+        timeout_sec=cfg.barrier_request_timeout_sec,
+        retries=cfg.barrier_request_retries,
+        verify_tls=cfg.barrier_verify_tls,
+    )
 
     LOG.info(
         "Pipeline started. dry_run=%s barrier_action_mode=%s whitelist_provider=%s",
@@ -207,9 +217,25 @@ def run(settings: Settings | None = None) -> None:
     )
     last_preview_write_ts = 0.0
     prev_frame: np.ndarray | None = None
+    pending_close_at: float | None = None
+    pending_close_plate: str | None = None
 
     try:
         while True:
+            now_monotonic = time.monotonic()
+            if pending_close_at is not None and now_monotonic >= pending_close_at:
+                try:
+                    barrier.close(reason="auto_close_timer", plate=pending_close_plate)
+                except Exception as exc:  # noqa: BLE001
+                    LOG.warning(
+                        "Barrier close call failed plate=%s reason=auto_close_timer: %s",
+                        pending_close_plate,
+                        exc,
+                    )
+                finally:
+                    pending_close_at = None
+                    pending_close_plate = None
+
             if db.is_sync_due(cfg.onec_sync_interval_hours):
                 try:
                     _sync_whitelist(db, provider, cfg)
@@ -373,7 +399,22 @@ def run(settings: Settings | None = None) -> None:
                         )
 
                         if decision.should_open:
-                            barrier.open(fast_vote.plate, frame_last_reason)
+                            opened = False
+                            try:
+                                opened = barrier.open(fast_vote.plate, frame_last_reason)
+                            except Exception as exc:  # noqa: BLE001
+                                LOG.warning(
+                                    "Barrier open call failed plate=%s reason=%s: %s",
+                                    fast_vote.plate,
+                                    frame_last_reason,
+                                    exc,
+                                )
+                            if opened:
+                                pending_close_at = time.monotonic() + max(
+                                    0.1,
+                                    cfg.barrier_close_delay_sec,
+                                )
+                                pending_close_plate = fast_vote.plate
                         continue
 
                     voter_key = f"zone:{detection.zone_id}" if detection.zone_id is not None else "full"
@@ -428,7 +469,22 @@ def run(settings: Settings | None = None) -> None:
                     )
 
                     if decision.should_open:
-                        barrier.open(vote.plate, decision.reason_code)
+                        opened = False
+                        try:
+                            opened = barrier.open(vote.plate, decision.reason_code)
+                        except Exception as exc:  # noqa: BLE001
+                            LOG.warning(
+                                "Barrier open call failed plate=%s reason=%s: %s",
+                                vote.plate,
+                                decision.reason_code,
+                                exc,
+                            )
+                        if opened:
+                            pending_close_at = time.monotonic() + max(
+                                0.1,
+                                cfg.barrier_close_delay_sec,
+                            )
+                            pending_close_plate = vote.plate
 
             if (
                 cfg.recognition_snapshot_enabled

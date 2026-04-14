@@ -109,6 +109,13 @@ def dashboard() -> dict[str, object]:
         "mode": {
             "dry_run_open": cfg.dry_run_open,
             "barrier_action_mode": cfg.barrier_action_mode,
+            "barrier_close_delay_sec": cfg.barrier_close_delay_sec,
+            "barrier_live_configured": bool(
+                cfg.barrier_ha_base_url
+                and cfg.barrier_ha_token
+                and cfg.barrier_open_entity_id
+                and cfg.barrier_close_entity_id
+            ),
             "min_confirmations": cfg.min_confirmations,
             "min_avg_confidence": cfg.min_avg_confidence,
             "voting_window_sec": cfg.voting_window_sec,

@@ -73,6 +73,14 @@ class Settings:
     global_cooldown_sec: float = 2.0
     dry_run_open: bool = True
     barrier_action_mode: str = "mock"
+    barrier_ha_base_url: str = ""
+    barrier_ha_token: str = ""
+    barrier_open_entity_id: str = ""
+    barrier_close_entity_id: str = ""
+    barrier_request_timeout_sec: float = 3.0
+    barrier_request_retries: int = 2
+    barrier_verify_tls: bool = True
+    barrier_close_delay_sec: float = 5.0
 
     db_path: str = "data/app.db"
     onec_sync_interval_hours: float = 24.0
@@ -122,6 +130,24 @@ class Settings:
             global_cooldown_sec=float(os.getenv("GLOBAL_COOLDOWN_SEC", Settings.global_cooldown_sec)),
             dry_run_open=os.getenv("DRY_RUN_OPEN", "1") in {"1", "true", "True"},
             barrier_action_mode=os.getenv("BARRIER_ACTION_MODE", Settings.barrier_action_mode),
+            barrier_ha_base_url=os.getenv("BARRIER_HA_BASE_URL", Settings.barrier_ha_base_url),
+            barrier_ha_token=os.getenv("BARRIER_HA_TOKEN", Settings.barrier_ha_token),
+            barrier_open_entity_id=os.getenv(
+                "BARRIER_OPEN_ENTITY_ID", Settings.barrier_open_entity_id
+            ),
+            barrier_close_entity_id=os.getenv(
+                "BARRIER_CLOSE_ENTITY_ID", Settings.barrier_close_entity_id
+            ),
+            barrier_request_timeout_sec=float(
+                os.getenv("BARRIER_REQUEST_TIMEOUT_SEC", Settings.barrier_request_timeout_sec)
+            ),
+            barrier_request_retries=int(
+                os.getenv("BARRIER_REQUEST_RETRIES", Settings.barrier_request_retries)
+            ),
+            barrier_verify_tls=os.getenv("BARRIER_VERIFY_TLS", "1") in {"1", "true", "True"},
+            barrier_close_delay_sec=float(
+                os.getenv("BARRIER_CLOSE_DELAY_SEC", Settings.barrier_close_delay_sec)
+            ),
             db_path=os.getenv("DB_PATH", Settings.db_path),
             onec_sync_interval_hours=float(
                 os.getenv("ONEC_SYNC_INTERVAL_HOURS", Settings.onec_sync_interval_hours)

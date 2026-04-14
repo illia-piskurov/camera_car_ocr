@@ -13,7 +13,7 @@ Monorepo with:
 - Strict whitelist-only decision policy.
 - SQLite persistence via SQLAlchemy ORM.
 - Daily 1C sync interface with local stub provider.
-- Dry-run barrier controller (no hardware command yet).
+- Barrier controller with mock/live modes and Home Assistant API integration.
 - Live Preview frame in dashboard (annotated snapshot for demo/debug).
 
 ## Run Backend Pipeline
@@ -63,6 +63,15 @@ Edit `backend/onec_whitelist_stub.txt` and keep one plate per line.
 - `MIN_CONFIRMATIONS` (default `3`)
 - `MIN_AVG_CONFIDENCE` (default `0.80`)
 - `DRY_RUN_OPEN` (default `1`)
+- `BARRIER_ACTION_MODE` (`mock`/`live`, default `mock`)
+- `BARRIER_HA_BASE_URL` (e.g. `http://192.168.100.10:8123`)
+- `BARRIER_HA_TOKEN` (Home Assistant Long-Lived Access Token)
+- `BARRIER_OPEN_ENTITY_ID` (e.g. `input_button.testovyi_shlagbaum_otkryt`)
+- `BARRIER_CLOSE_ENTITY_ID` (e.g. `input_button.testovyi_shlagbaum_zakryt`)
+- `BARRIER_REQUEST_TIMEOUT_SEC` (default `3.0`)
+- `BARRIER_REQUEST_RETRIES` (default `2`)
+- `BARRIER_VERIFY_TLS` (`1`/`0`, default `1`)
+- `BARRIER_CLOSE_DELAY_SEC` (auto-close delay after successful open, default `5.0`)
 - `ENABLE_FUZZY_MATCH` (default `0`)
 - `PREVIEW_ENABLED` (default `1`)
 - `PREVIEW_WRITE_INTERVAL_SEC` (default `3.0`)
@@ -74,6 +83,15 @@ Edit `backend/onec_whitelist_stub.txt` and keep one plate per line.
 
 When any detection frame is produced, backend saves an annotated snapshot with plate/decision overlay into `RECOGNITION_SNAPSHOT_DIR`.
 Dashboard table rows can open related event snapshot via backend endpoint `/api/events/{event_id}/image`.
+
+## Home Assistant Barrier Mode
+
+1. In Home Assistant, generate a Long-Lived Access Token.
+2. Set `DRY_RUN_OPEN=0` and `BARRIER_ACTION_MODE=live`.
+3. Configure `BARRIER_HA_BASE_URL`, `BARRIER_HA_TOKEN`, `BARRIER_OPEN_ENTITY_ID`, and `BARRIER_CLOSE_ENTITY_ID`.
+4. Backend sends `POST /api/services/input_button/press` for open/close and schedules close by `BARRIER_CLOSE_DELAY_SEC`.
+
+If Home Assistant is unavailable or token is invalid, backend logs warning and keeps OCR loop running.
 
 ## Safety Defaults
 
