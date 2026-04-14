@@ -222,20 +222,6 @@ def run(settings: Settings | None = None) -> None:
 
     try:
         while True:
-            now_monotonic = time.monotonic()
-            if pending_close_at is not None and now_monotonic >= pending_close_at:
-                try:
-                    barrier.close(reason="auto_close_timer", plate=pending_close_plate)
-                except Exception as exc:  # noqa: BLE001
-                    LOG.warning(
-                        "Barrier close call failed plate=%s reason=auto_close_timer: %s",
-                        pending_close_plate,
-                        exc,
-                    )
-                finally:
-                    pending_close_at = None
-                    pending_close_plate = None
-
             if db.is_sync_due(cfg.onec_sync_interval_hours):
                 try:
                     _sync_whitelist(db, provider, cfg)
@@ -244,6 +230,19 @@ def run(settings: Settings | None = None) -> None:
 
             frame = camera.fetch_frame()
             if frame is None:
+                now_monotonic = time.monotonic()
+                if pending_close_at is not None and now_monotonic >= pending_close_at:
+                    try:
+                        barrier.close(reason="auto_close_timer", plate=pending_close_plate)
+                    except Exception as exc:  # noqa: BLE001
+                        LOG.warning(
+                            "Barrier close call failed plate=%s reason=auto_close_timer: %s",
+                            pending_close_plate,
+                            exc,
+                        )
+                    finally:
+                        pending_close_at = None
+                        pending_close_plate = None
                 time.sleep(cfg.poll_interval_sec)
                 continue
 
@@ -485,6 +484,30 @@ def run(settings: Settings | None = None) -> None:
                                 cfg.barrier_close_delay_sec,
                             )
                             pending_close_plate = vote.plate
+
+            if detections and pending_close_at is not None:
+                # Safety hold: while any plate is visible, keep close deadline at now + delay.
+                pending_close_at = time.monotonic() + max(0.1, cfg.barrier_close_delay_sec)
+                if frame_last_plate:
+                    pending_close_plate = frame_last_plate
+                elif detections[0].normalized_text:
+                    pending_close_plate = detections[0].normalized_text
+                elif detections[0].raw_text:
+                    pending_close_plate = detections[0].raw_text
+
+            now_monotonic = time.monotonic()
+            if pending_close_at is not None and now_monotonic >= pending_close_at:
+                try:
+                    barrier.close(reason="auto_close_timer", plate=pending_close_plate)
+                except Exception as exc:  # noqa: BLE001
+                    LOG.warning(
+                        "Barrier close call failed plate=%s reason=auto_close_timer: %s",
+                        pending_close_plate,
+                        exc,
+                    )
+                finally:
+                    pending_close_at = None
+                    pending_close_plate = None
 
             if (
                 cfg.recognition_snapshot_enabled

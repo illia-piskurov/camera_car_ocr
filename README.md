@@ -90,6 +90,7 @@ Dashboard table rows can open related event snapshot via backend endpoint `/api/
 2. Set `DRY_RUN_OPEN=0` and `BARRIER_ACTION_MODE=live`.
 3. Configure `BARRIER_HA_BASE_URL`, `BARRIER_HA_TOKEN`, `BARRIER_OPEN_ENTITY_ID`, and `BARRIER_CLOSE_ENTITY_ID`.
 4. Backend sends `POST /api/services/input_button/press` for open/close and schedules close by `BARRIER_CLOSE_DELAY_SEC`.
+5. While barrier is open, any detected plate refreshes close deadline to `now + BARRIER_CLOSE_DELAY_SEC` (deadline is replaced, not accumulated).
 
 If Home Assistant is unavailable or token is invalid, backend logs warning and keeps OCR loop running.
 
