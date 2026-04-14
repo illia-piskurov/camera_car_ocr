@@ -69,14 +69,10 @@ class Settings:
     fast_open_enabled: bool = True
     fast_open_confidence: float = 0.91
 
-    plate_cooldown_sec: float = 10.0
-    global_cooldown_sec: float = 2.0
     dry_run_open: bool = True
     barrier_action_mode: str = "mock"
     barrier_ha_base_url: str = ""
     barrier_ha_token: str = ""
-    barrier_open_entity_id: str = ""
-    barrier_close_entity_id: str = ""
     zone1_barrier_open_entity_id: str = ""
     zone1_barrier_close_entity_id: str = ""
     zone1_barrier_close_delay_sec: float = 0.0
@@ -114,9 +110,6 @@ class Settings:
     motion_threshold_percent: float = 0.05
     motion_blur_kernel: int = 5
 
-    def has_global_barrier_entities(self) -> bool:
-        return bool(self.barrier_open_entity_id and self.barrier_close_entity_id)
-
     def has_zone_barrier_entities(self, zone_id: int) -> bool:
         open_id, close_id = self.get_zone_barrier_entities(zone_id)
         return bool(open_id and close_id)
@@ -124,20 +117,14 @@ class Settings:
     def is_barrier_live_configured(self) -> bool:
         if not self.barrier_ha_base_url or not self.barrier_ha_token:
             return False
-        return self.has_global_barrier_entities() or self.has_zone_barrier_entities(1) or self.has_zone_barrier_entities(2)
+        return self.has_zone_barrier_entities(1) or self.has_zone_barrier_entities(2)
 
     def get_zone_barrier_entities(self, zone_id: int | None) -> tuple[str, str]:
         if zone_id == 1:
             return self.zone1_barrier_open_entity_id, self.zone1_barrier_close_entity_id
         if zone_id == 2:
             return self.zone2_barrier_open_entity_id, self.zone2_barrier_close_entity_id
-        return self.barrier_open_entity_id, self.barrier_close_entity_id
-
-    def resolve_barrier_entities(self, zone_id: int | None) -> tuple[str, str]:
-        open_id, close_id = self.get_zone_barrier_entities(zone_id)
-        if open_id and close_id:
-            return open_id, close_id
-        return self.barrier_open_entity_id, self.barrier_close_entity_id
+        return "", ""
 
     def get_zone_close_delay_sec(self, zone_id: int | None) -> float:
         if zone_id == 1 and self.zone1_barrier_close_delay_sec > 0:
@@ -164,18 +151,10 @@ class Settings:
             min_avg_confidence=float(os.getenv("MIN_AVG_CONFIDENCE", Settings.min_avg_confidence)),
             fast_open_enabled=os.getenv("FAST_OPEN_ENABLED", "1") in {"1", "true", "True"},
             fast_open_confidence=float(os.getenv("FAST_OPEN_CONFIDENCE", Settings.fast_open_confidence)),
-            plate_cooldown_sec=float(os.getenv("PLATE_COOLDOWN_SEC", Settings.plate_cooldown_sec)),
-            global_cooldown_sec=float(os.getenv("GLOBAL_COOLDOWN_SEC", Settings.global_cooldown_sec)),
             dry_run_open=os.getenv("DRY_RUN_OPEN", "1") in {"1", "true", "True"},
             barrier_action_mode=os.getenv("BARRIER_ACTION_MODE", Settings.barrier_action_mode),
             barrier_ha_base_url=os.getenv("BARRIER_HA_BASE_URL", Settings.barrier_ha_base_url),
             barrier_ha_token=os.getenv("BARRIER_HA_TOKEN", Settings.barrier_ha_token),
-            barrier_open_entity_id=os.getenv(
-                "BARRIER_OPEN_ENTITY_ID", Settings.barrier_open_entity_id
-            ),
-            barrier_close_entity_id=os.getenv(
-                "BARRIER_CLOSE_ENTITY_ID", Settings.barrier_close_entity_id
-            ),
             zone1_barrier_open_entity_id=os.getenv(
                 "ZONE1_BARRIER_OPEN_ENTITY_ID", Settings.zone1_barrier_open_entity_id
             ),

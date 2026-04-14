@@ -16,8 +16,7 @@ from .barrier import BarrierController
 from .camera import SnapshotCameraClient
 from .config import Settings
 from .db import Database
-from .decision import BarrierDecisionEngine
-from .motion_detector import has_motion, has_motion_in_zone
+from .motion_detector import has_motion_in_zone
 from .onec_provider import WhitelistProvider, create_whitelist_provider
 from .types import VoteOutcome
 from .voting import TemporalVoter
@@ -193,17 +192,11 @@ def run(settings: Settings | None = None) -> None:
     )
     alpr = AlprService(detector_model=cfg.detector_model, ocr_model=cfg.ocr_model)
     voters: dict[str, TemporalVoter] = {}
-    decider = BarrierDecisionEngine(
-        plate_cooldown_sec=cfg.plate_cooldown_sec,
-        global_cooldown_sec=cfg.global_cooldown_sec,
-    )
     barrier = BarrierController(
         dry_run=cfg.dry_run_open,
         action_mode=cfg.barrier_action_mode,
         ha_base_url=cfg.barrier_ha_base_url,
         ha_token=cfg.barrier_ha_token,
-        open_entity_id=cfg.barrier_open_entity_id,
-        close_entity_id=cfg.barrier_close_entity_id,
         zone_open_entity_ids={
             1: cfg.zone1_barrier_open_entity_id,
             2: cfg.zone2_barrier_open_entity_id,
@@ -227,6 +220,7 @@ def run(settings: Settings | None = None) -> None:
     prev_frame: np.ndarray | None = None
     pending_close_at_by_zone: dict[int | None, float] = {}
     pending_close_plate_by_zone: dict[int | None, str] = {}
+    last_no_zone_warning_ts = 0.0
 
     def close_expired_barriers(now_monotonic: float) -> None:
         expired_zone_ids = [
@@ -264,51 +258,44 @@ def run(settings: Settings | None = None) -> None:
                 continue
 
             skip_alpr_this_frame = False
+            now = datetime.now(timezone.utc)
+            frame_id = uuid4().hex
+            active_zones = db.get_zones(include_disabled=False)[:3]
+
+            if not active_zones:
+                now_monotonic = time.monotonic()
+                if now_monotonic - last_no_zone_warning_ts >= 30.0:
+                    LOG.warning(
+                        "No active zones configured. ALPR and barrier actions are paused until zones are defined"
+                    )
+                    last_no_zone_warning_ts = now_monotonic
+                close_expired_barriers(now_monotonic)
+                prev_frame = frame
+                time.sleep(cfg.poll_interval_sec)
+                continue
 
             # Motion-gated ALPR: skip expensive inference if no motion detected
             if cfg.motion_detection_enabled and prev_frame is not None:
-                now = datetime.now(timezone.utc)
-                frame_id = uuid4().hex
-                active_zones = db.get_zones(include_disabled=False)[:3]
-
-                if active_zones:
-                    # Per-zone motion check: only process zones with motion
-                    zones_with_motion = []
-                    for zone in active_zones:
-                        if has_motion_in_zone(
-                            prev_frame,
-                            frame,
-                            zone,
-                            threshold=cfg.motion_threshold_percent,
-                            blur_kernel=cfg.motion_blur_kernel,
-                        ):
-                            zones_with_motion.append(zone)
-
-                    if not zones_with_motion:
-                        # No motion in any zone, skip ALPR this frame
-                        LOG.debug("No motion in any zone, skipping ALPR")
-                        skip_alpr_this_frame = True
-
-                    # Filter to only zones with motion
-                    if zones_with_motion:
-                        active_zones = zones_with_motion
-                else:
-                    # Full-frame motion check
-                    if not has_motion(
+                # Per-zone motion check: only process zones with motion.
+                zones_with_motion = []
+                for zone in active_zones:
+                    if has_motion_in_zone(
                         prev_frame,
                         frame,
+                        zone,
                         threshold=cfg.motion_threshold_percent,
                         blur_kernel=cfg.motion_blur_kernel,
                     ):
-                        # No motion in full frame, skip ALPR this frame
-                        LOG.debug("No motion in full frame, skipping ALPR")
-                        skip_alpr_this_frame = True
+                        zones_with_motion.append(zone)
 
-            else:
-                # Motion detection disabled or first frame: initialize normally
-                now = datetime.now(timezone.utc)
-                frame_id = uuid4().hex
-                active_zones = db.get_zones(include_disabled=False)[:3]
+                if not zones_with_motion:
+                    # No motion in any zone, skip ALPR this frame
+                    LOG.debug("No motion in any zone, skipping ALPR")
+                    skip_alpr_this_frame = True
+
+                # Filter to only zones with motion
+                if zones_with_motion:
+                    active_zones = zones_with_motion
 
             active_zones_by_id: dict[int, dict[str, object]] = {
                 int(zone["id"]): zone for zone in active_zones if zone.get("id") is not None
@@ -337,8 +324,6 @@ def run(settings: Settings | None = None) -> None:
                             zone_name=str(zone.get("name") or ""),
                         )
                     )
-            elif not skip_alpr_this_frame:
-                detections = alpr.detect(frame, detected_at=now, frame_id=frame_id)
 
             frame_last_decision: str | None = None
             frame_last_plate: str | None = None
@@ -376,16 +361,11 @@ def run(settings: Settings | None = None) -> None:
                             fuzzy_plate=fast_vote.fuzzy_plate,
                             enable_fuzzy_match=cfg.enable_fuzzy_match,
                         )
-                        decision = decider.evaluate(
-                            vote=fast_vote,
-                            is_whitelisted=whitelisted,
-                            now=detection.detected_at,
-                        )
-                        frame_last_decision = "open" if decision.should_open else "deny"
+                        should_open = whitelisted
+                        decision_reason = "open_approved" if should_open else "not_whitelisted"
+                        frame_last_decision = "open" if should_open else "deny"
                         frame_last_plate = fast_vote.plate
-                        frame_last_reason = (
-                            f"fast_{decision.reason_code}" if decision.reason_code else "fast_open_approved"
-                        )
+                        frame_last_reason = f"fast_{decision_reason}"
                         frame_last_zone = detection.zone_name
                         snapshot_source_detection = detection
 
@@ -414,24 +394,28 @@ def run(settings: Settings | None = None) -> None:
                             frame_last_reason,
                         )
 
-                        if decision.should_open:
+                        if should_open:
+                            zone_id = detection.zone_id
+                            if zone_id in pending_close_at_by_zone:
+                                # Already open in this zone: do not send duplicate open command.
+                                continue
+
                             opened = False
                             try:
                                 opened = barrier.open(
                                     fast_vote.plate,
                                     frame_last_reason,
-                                    zone_id=detection.zone_id,
+                                    zone_id=zone_id,
                                 )
                             except Exception as exc:  # noqa: BLE001
                                 LOG.warning(
                                     "Barrier open call failed plate=%s zone=%s reason=%s: %s",
                                     fast_vote.plate,
-                                    detection.zone_id if detection.zone_id is not None else "full",
+                                    zone_id if zone_id is not None else "full",
                                     frame_last_reason,
                                     exc,
                                 )
                             if opened:
-                                zone_id = detection.zone_id
                                 close_delay = max(0.1, cfg.get_zone_close_delay_sec(zone_id))
                                 pending_close_at_by_zone[zone_id] = time.monotonic() + close_delay
                                 pending_close_plate_by_zone[zone_id] = fast_vote.plate
@@ -456,10 +440,11 @@ def run(settings: Settings | None = None) -> None:
                         fuzzy_plate=vote.fuzzy_plate,
                         enable_fuzzy_match=cfg.enable_fuzzy_match,
                     )
-                    decision = decider.evaluate(vote=vote, is_whitelisted=whitelisted, now=detection.detected_at)
-                    frame_last_decision = "open" if decision.should_open else "deny"
+                    should_open = whitelisted
+                    decision_reason = "open_approved" if should_open else "not_whitelisted"
+                    frame_last_decision = "open" if should_open else "deny"
                     frame_last_plate = vote.plate
-                    frame_last_reason = decision.reason_code
+                    frame_last_reason = decision_reason
                     frame_last_zone = detection.zone_name
                     snapshot_source_detection = detection
 
@@ -476,7 +461,7 @@ def run(settings: Settings | None = None) -> None:
                         zone_id=detection.zone_id,
                         zone_name=detection.zone_name,
                         decision=frame_last_decision,
-                        reason_code=decision.reason_code,
+                        reason_code=decision_reason,
                     )
 
                     LOG.info(
@@ -485,27 +470,31 @@ def run(settings: Settings | None = None) -> None:
                         vote.confirmations,
                         vote.avg_confidence,
                         frame_last_decision,
-                        decision.reason_code,
+                        decision_reason,
                     )
 
-                    if decision.should_open:
+                    if should_open:
+                        zone_id = detection.zone_id
+                        if zone_id in pending_close_at_by_zone:
+                            # Already open in this zone: do not send duplicate open command.
+                            continue
+
                         opened = False
                         try:
                             opened = barrier.open(
                                 vote.plate,
-                                decision.reason_code,
-                                zone_id=detection.zone_id,
+                                decision_reason,
+                                zone_id=zone_id,
                             )
                         except Exception as exc:  # noqa: BLE001
                             LOG.warning(
                                 "Barrier open call failed plate=%s zone=%s reason=%s: %s",
                                 vote.plate,
-                                detection.zone_id if detection.zone_id is not None else "full",
-                                decision.reason_code,
+                                zone_id if zone_id is not None else "full",
+                                decision_reason,
                                 exc,
                             )
                         if opened:
-                            zone_id = detection.zone_id
                             close_delay = max(0.1, cfg.get_zone_close_delay_sec(zone_id))
                             pending_close_at_by_zone[zone_id] = time.monotonic() + close_delay
                             pending_close_plate_by_zone[zone_id] = vote.plate

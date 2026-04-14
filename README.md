@@ -66,14 +66,12 @@ Edit `backend/onec_whitelist_stub.txt` and keep one plate per line.
 - `BARRIER_ACTION_MODE` (`mock`/`live`, default `mock`)
 - `BARRIER_HA_BASE_URL` (e.g. `http://192.168.100.10:8123`)
 - `BARRIER_HA_TOKEN` (Home Assistant Long-Lived Access Token)
-- `BARRIER_OPEN_ENTITY_ID` (e.g. `input_button.testovyi_shlagbaum_otkryt`)
-- `BARRIER_CLOSE_ENTITY_ID` (e.g. `input_button.testovyi_shlagbaum_zakryt`)
-- `ZONE1_BARRIER_OPEN_ENTITY_ID` (optional override for zone 1)
-- `ZONE1_BARRIER_CLOSE_ENTITY_ID` (optional override for zone 1)
-- `ZONE1_BARRIER_CLOSE_DELAY_SEC` (optional zone 1 close delay; `0` means use global delay)
-- `ZONE2_BARRIER_OPEN_ENTITY_ID` (optional override for zone 2)
-- `ZONE2_BARRIER_CLOSE_ENTITY_ID` (optional override for zone 2)
-- `ZONE2_BARRIER_CLOSE_DELAY_SEC` (optional zone 2 close delay; `0` means use global delay)
+- `ZONE1_BARRIER_OPEN_ENTITY_ID` (required for zone 1 in live mode)
+- `ZONE1_BARRIER_CLOSE_ENTITY_ID` (required for zone 1 in live mode)
+- `ZONE1_BARRIER_CLOSE_DELAY_SEC` (zone 1 close delay; `0` means use global delay)
+- `ZONE2_BARRIER_OPEN_ENTITY_ID` (required for zone 2 in live mode)
+- `ZONE2_BARRIER_CLOSE_ENTITY_ID` (required for zone 2 in live mode)
+- `ZONE2_BARRIER_CLOSE_DELAY_SEC` (zone 2 close delay; `0` means use global delay)
 - `BARRIER_REQUEST_TIMEOUT_SEC` (default `3.0`)
 - `BARRIER_REQUEST_RETRIES` (default `2`)
 - `BARRIER_VERIFY_TLS` (`1`/`0`, default `1`)
@@ -94,11 +92,10 @@ Dashboard table rows can open related event snapshot via backend endpoint `/api/
 
 1. In Home Assistant, generate a Long-Lived Access Token.
 2. Set `DRY_RUN_OPEN=0` and `BARRIER_ACTION_MODE=live`.
-3. Configure `BARRIER_HA_BASE_URL`, `BARRIER_HA_TOKEN`, and barrier entities.
-4. For two-zone mode, set `ZONE1_BARRIER_*` and `ZONE2_BARRIER_*` to map each zone to its own barrier entities.
-5. `BARRIER_*` remains fallback when zone-specific values are not set.
-6. Backend sends `POST /api/services/input_button/press` for open/close and schedules close by configured delay.
-7. While barrier is open, detections in that same zone refresh only that zone close deadline to `now + delay` (deadline is replaced, not accumulated).
+3. Configure `BARRIER_HA_BASE_URL`, `BARRIER_HA_TOKEN`, `ZONE1_BARRIER_*`, and `ZONE2_BARRIER_*`.
+4. Backend sends `POST /api/services/input_button/press` for open/close and schedules close by configured delay.
+5. While barrier is open, detections in that same zone refresh only that zone close deadline to `now + delay` (deadline is replaced, not accumulated).
+6. If no active zones are configured, backend does not run ALPR or barrier actions.
 
 If Home Assistant is unavailable or token is invalid, backend logs warning and keeps OCR loop running.
 
@@ -106,4 +103,4 @@ If Home Assistant is unavailable or token is invalid, backend logs warning and k
 
 - Opens only for whitelist plates.
 - On uncertainty or errors, the system does not open the barrier.
-- Cooldowns prevent rapid repeated open commands.
+- While barrier is open, same-zone detections keep it open by refreshing close deadline.

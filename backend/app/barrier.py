@@ -15,8 +15,6 @@ class BarrierController:
         action_mode: str = "mock",
         ha_base_url: str = "",
         ha_token: str = "",
-        open_entity_id: str = "",
-        close_entity_id: str = "",
         zone_open_entity_ids: dict[int, str] | None = None,
         zone_close_entity_ids: dict[int, str] | None = None,
         timeout_sec: float = 3.0,
@@ -31,8 +29,6 @@ class BarrierController:
         self.action_mode = "mock" if dry_run else mode
         self.ha_base_url = (ha_base_url or "").strip().rstrip("/")
         self.ha_token = (ha_token or "").strip()
-        self.open_entity_id = (open_entity_id or "").strip()
-        self.close_entity_id = (close_entity_id or "").strip()
         self.zone_open_entity_ids = {
             int(zone_id): (entity_id or "").strip()
             for zone_id, entity_id in (zone_open_entity_ids or {}).items()
@@ -56,27 +52,25 @@ class BarrierController:
         if not self.ha_base_url or not self.ha_token:
             return False
 
-        if self.open_entity_id and self.close_entity_id:
-            return True
-
         for zone_id in set(self.zone_open_entity_ids) | set(self.zone_close_entity_ids):
             if self.zone_open_entity_ids.get(zone_id) and self.zone_close_entity_ids.get(zone_id):
                 return True
         return False
 
     def _resolve_entity_id(self, *, action: str, zone_id: int | None) -> str:
-        if action == "open":
-            if zone_id is not None:
-                zone_entity = self.zone_open_entity_ids.get(zone_id)
-                if zone_entity:
-                    return zone_entity
-            return self.open_entity_id
+        if zone_id is None:
+            return ""
 
-        if zone_id is not None:
-            zone_entity = self.zone_close_entity_ids.get(zone_id)
+        if action == "open":
+            zone_entity = self.zone_open_entity_ids.get(zone_id)
             if zone_entity:
                 return zone_entity
-        return self.close_entity_id
+            return ""
+
+        zone_entity = self.zone_close_entity_ids.get(zone_id)
+        if zone_entity:
+            return zone_entity
+        return ""
 
     def _press_input_button(
         self,

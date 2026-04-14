@@ -28,9 +28,3 @@ class VoteOutcome:
     confirmations: int
     avg_confidence: float
     window_sec: float
-
-
-@dataclass(frozen=True)
-class DecisionResult:
-    should_open: bool
-    reason_code: str
