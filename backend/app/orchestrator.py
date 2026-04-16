@@ -596,7 +596,7 @@ def run(settings: Settings | None = None) -> None:
                         frame=second_frame,
                         alpr=alpr,
                         detected_at=datetime.now(timezone.utc),
-                        frame_id=uuid4().hex,
+                        frame_id=stage.frame_id,
                         active_zones=stage.active_zones,
                     )
                     detections.extend(second_detections)
