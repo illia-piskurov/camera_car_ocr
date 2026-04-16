@@ -119,10 +119,8 @@ def dashboard() -> dict[str, object]:
             "ocr_extend_threshold": cfg.ocr_extend_threshold,
             "two_shot_gap_ms": cfg.two_shot_gap_ms,
             "two_shot_max_pairs": cfg.two_shot_max_pairs,
-            # Legacy fields retained for frontend compatibility.
-            "min_confirmations": 2,
-            "min_avg_confidence": cfg.ocr_open_threshold,
-            "voting_window_sec": cfg.two_shot_gap_ms / 1000.0,
+            "decision_model_version": "two-shot-v1",
+            "legacy_config_deprecated": False,
         },
         "sync": {
             "source": provider.source,

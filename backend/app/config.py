@@ -68,12 +68,6 @@ class Settings:
     two_shot_gap_ms: int = 200
     two_shot_max_pairs: int = 2
 
-    voting_window_sec: float = 4.0
-    min_confirmations: int = 2
-    min_avg_confidence: float = 0.80
-    fast_open_enabled: bool = True
-    fast_open_confidence: float = 0.91
-
     dry_run_open: bool = True
     barrier_action_mode: str = "mock"
     barrier_ha_base_url: str = ""
@@ -161,11 +155,6 @@ class Settings:
             two_shot_max_pairs=int(
                 os.getenv("TWO_SHOT_MAX_PAIRS", Settings.two_shot_max_pairs)
             ),
-            voting_window_sec=float(os.getenv("VOTING_WINDOW_SEC", Settings.voting_window_sec)),
-            min_confirmations=int(os.getenv("MIN_CONFIRMATIONS", Settings.min_confirmations)),
-            min_avg_confidence=float(os.getenv("MIN_AVG_CONFIDENCE", Settings.min_avg_confidence)),
-            fast_open_enabled=os.getenv("FAST_OPEN_ENABLED", "1") in {"1", "true", "True"},
-            fast_open_confidence=float(os.getenv("FAST_OPEN_CONFIDENCE", Settings.fast_open_confidence)),
             dry_run_open=os.getenv("DRY_RUN_OPEN", "1") in {"1", "true", "True"},
             barrier_action_mode=os.getenv("BARRIER_ACTION_MODE", Settings.barrier_action_mode),
             barrier_ha_base_url=os.getenv("BARRIER_HA_BASE_URL", Settings.barrier_ha_base_url),

@@ -6,7 +6,7 @@ from types import SimpleNamespace
 from app import api_server
 
 
-def test_dashboard_mode_payload_keeps_frontend_compatibility(monkeypatch) -> None:
+def test_dashboard_mode_payload_exposes_two_shot_only(monkeypatch) -> None:
     fixed_now = datetime(2026, 4, 14, 12, 0, 0, tzinfo=timezone.utc)
 
     class CfgStub:
@@ -74,9 +74,8 @@ def test_dashboard_mode_payload_keeps_frontend_compatibility(monkeypatch) -> Non
         "ocr_extend_threshold",
         "two_shot_gap_ms",
         "two_shot_max_pairs",
-        "min_confirmations",
-        "min_avg_confidence",
-        "voting_window_sec",
+        "decision_model_version",
+        "legacy_config_deprecated",
     }
     assert expected_keys.issubset(mode.keys())
 
@@ -84,8 +83,8 @@ def test_dashboard_mode_payload_keeps_frontend_compatibility(monkeypatch) -> Non
     assert mode["ocr_extend_threshold"] == 0.80
     assert mode["two_shot_gap_ms"] == 200
     assert mode["two_shot_max_pairs"] == 2
-
-    # Legacy frontend compatibility fields
-    assert mode["min_confirmations"] == 2
-    assert mode["min_avg_confidence"] == mode["ocr_open_threshold"]
-    assert mode["voting_window_sec"] == mode["two_shot_gap_ms"] / 1000.0
+    assert mode["decision_model_version"] == "two-shot-v1"
+    assert mode["legacy_config_deprecated"] is False
+    assert "min_confirmations" not in mode
+    assert "min_avg_confidence" not in mode
+    assert "voting_window_sec" not in mode
