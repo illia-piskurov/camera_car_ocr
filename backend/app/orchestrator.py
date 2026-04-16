@@ -67,30 +67,6 @@ def _sync_whitelist(db: Database, provider: WhitelistProvider, cfg: Settings) ->
     LOG.info("Whitelist synced from %s: %s plates", provider.source, count)
 
 
-def _close_expired_zones(
-    *,
-    zone_states: dict[int | None, ZoneRuntimeState],
-    barrier: BarrierController,
-    now_monotonic: float,
-) -> None:
-    for zone_id, state in zone_states.items():
-        deadline = state.close_deadline_monotonic
-        if deadline is None or now_monotonic < deadline:
-            continue
-
-        try:
-            barrier.close(reason="auto_close_timer", plate=state.last_plate, zone_id=zone_id)
-        except Exception as exc:  # noqa: BLE001
-            LOG.warning(
-                "Barrier close call failed plate=%s zone=%s reason=auto_close_timer: %s",
-                state.last_plate,
-                zone_id if zone_id is not None else "full",
-                exc,
-            )
-        finally:
-            state.clear()
-
-
 def _process_frame(
     *,
     frame,
