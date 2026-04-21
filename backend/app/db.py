@@ -183,11 +183,12 @@ class Database:
             "has_credentials": bool(row.username_encrypted or row.password_encrypted),
         }
 
-    def list_cameras(self) -> list[dict[str, object]]:
+    def list_cameras(self, is_active: bool | None = None) -> list[dict[str, object]]:
         with self.SessionLocal() as session:
-            rows = session.execute(
-                select(Camera).order_by(Camera.sort_order.asc(), Camera.id.asc())
-            ).scalars().all()
+            query = select(Camera).order_by(Camera.sort_order.asc(), Camera.id.asc())
+            if is_active is not None:
+                query = query.where(Camera.is_active == is_active)
+            rows = session.execute(query).scalars().all()
             return [self._camera_row(row) for row in rows]
 
     def get_camera(self, camera_id: int) -> dict[str, object] | None:

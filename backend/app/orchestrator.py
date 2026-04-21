@@ -228,6 +228,7 @@ def _handle_detections(
     cfg: Settings,
     barrier: BarrierController,
     zone_states: dict[int | None, ZoneRuntimeState],
+    camera_id: int | None = None,
 ) -> DetectionStageResult:
     result = DetectionStageResult(
         frame_last_decision=None,
@@ -244,6 +245,7 @@ def _handle_detections(
             decision="observed",
             reason_code="raw_detection",
             db=db,
+            camera_id=camera_id,
         )
 
     if decision_detection is None:
@@ -267,6 +269,7 @@ def _handle_detections(
         decision=result.frame_last_decision,
         reason_code=reason_code,
         db=db,
+        camera_id=camera_id,
     )
 
     LOG.info(
@@ -516,11 +519,147 @@ def _preview_stage(
         LOG.warning("Failed to save preview artifacts: %s", exc)
 
 
+def _poll_single_camera(
+    *,
+    camera_record: dict,
+    camera: SnapshotCameraClient,
+    alpr: AlprService,
+    barrier: BarrierController,
+    db: Database,
+    cfg: Settings,
+    state: PipelineState,
+) -> None:
+    """Poll and process a single camera's frame.
+
+    Args:
+        camera_record: Camera dict from database (with id, name, etc.)
+        camera: SnapshotCameraClient instance for this camera.
+        alpr: ALPR service instance.
+        barrier: BarrierController instance.
+        db: Database connection.
+        cfg: Settings configuration.
+        state: Pipeline state with zone_states and prev_frame.
+    """
+    camera_id = camera_record.get("id")
+    camera_name = camera_record.get("name", "unknown")
+
+    # Fetch frame
+    frame = camera.fetch_frame()
+    if frame is None:
+        state.close_all_zones(barrier)
+        return
+
+    # Process frame (zone filtering, motion detection)
+    stage = _process_frame(
+        frame=frame,
+        prev_frame=state.prev_frame,
+        db=db,
+        cfg=cfg,
+        state=state,
+    )
+    if stage is None:
+        state.close_all_zones(barrier)
+        state.update_frame(frame)
+        return
+
+    # Detect plates in zones using two-shot confirmation
+    detections: list[PlateDetection] = []
+    zone_frames: dict[int, np.ndarray] = {}
+    decision_detection: PlateDetection | None = None
+
+    if not stage.skip_alpr_this_frame:
+        first_detections, zone_frames = _detect_in_zones(
+            frame=frame,
+            alpr=alpr,
+            detected_at=stage.now,
+            frame_id=stage.frame_id,
+            active_zones=stage.active_zones,
+        )
+        detections.extend(first_detections)
+
+        pair_detections = first_detections
+        max_pairs = max(1, cfg.two_shot_max_pairs)
+        for pair_index in range(max_pairs):
+            time.sleep(max(0.0, cfg.two_shot_gap_ms / 1000.0))
+
+            second_frame = camera.fetch_frame()
+            if second_frame is None:
+                break
+
+            second_detections, _ = _detect_in_zones(
+                frame=second_frame,
+                alpr=alpr,
+                detected_at=datetime.now(timezone.utc),
+                frame_id=stage.frame_id,
+                active_zones=stage.active_zones,
+            )
+            detections.extend(second_detections)
+
+            decision_detection = _select_two_shot_candidate(
+                first=pair_detections,
+                second=second_detections,
+                min_ocr_confidence=cfg.ocr_open_threshold,
+            )
+            if decision_detection is not None:
+                break
+
+            pair_detections = second_detections
+
+    # Make decisions and act on detections
+    detection_result = _handle_detections(
+        detections=detections,
+        decision_detection=decision_detection,
+        db=db,
+        cfg=cfg,
+        barrier=barrier,
+        zone_states=state.zone_states,
+        camera_id=camera_id,
+    )
+
+    # Manage zone hold times
+    _refresh_zone_hold(
+        detections=detections,
+        cfg=cfg,
+        state=state,
+        now_monotonic=time.monotonic(),
+        motion_detected=(not cfg.motion_detection_enabled) or (not stage.skip_alpr_this_frame),
+    )
+    state.close_all_zones(barrier)
+
+    # Generate artifacts (snapshots and preview)
+    _snapshot_stage(
+        cfg=cfg,
+        detections=detections,
+        detection_result=detection_result,
+        frame=frame,
+        zone_frames=zone_frames,
+        stage=stage,
+        alpr=alpr,
+    )
+
+    _preview_stage(
+        cfg=cfg,
+        frame=frame,
+        detections=detections,
+        detection_result=detection_result,
+        stage=stage,
+        alpr=alpr,
+        state=state,
+    )
+
+    # Prepare for next iteration
+    state.update_frame(frame)
+
+
 def run(settings: Settings | None = None) -> None:
     """Run the main ALPR pipeline loop.
 
     Args:
         settings: Optional Settings instance; loads from env if not provided.
+
+    Supports multi-camera operation: loads active cameras from database and polls
+    them sequentially. Falls back to legacy single-camera mode if no cameras are
+    configured in the database.
     """
     cfg = settings or Settings.from_env()
     logging.basicConfig(
@@ -528,8 +667,39 @@ def run(settings: Settings | None = None) -> None:
         format="%(asctime)s | %(levelname)s | %(name)s | %(message)s",
     )
 
-    # Initialize all components
-    camera, alpr, barrier, db, provider = _initialize_pipeline(cfg)
+    # Initialize database and core components
+    db = Database(cfg.db_path)
+    db.init()
+
+    provider = create_whitelist_provider(cfg)
+
+    # Initialize ALPR and barrier
+    try:
+        alpr = AlprService(detector_model=cfg.detector_model, ocr_model=cfg.ocr_model)
+    except (ValueError, RuntimeError) as exc:
+        LOG.error("Failed to initialize ALPR models: %s", exc)
+        raise
+
+    zones = db.get_zones(include_disabled=True)
+    barrier = BarrierController(
+        dry_run=cfg.dry_run_open,
+        action_mode=cfg.barrier_action_mode,
+        ha_base_url=cfg.barrier_ha_base_url,
+        ha_token=cfg.barrier_ha_token,
+        zone_open_entity_ids={
+            int(zone["id"]): str(zone.get("ha_open_entity_id") or "")
+            for zone in zones
+            if zone.get("ha_open_entity_id")
+        },
+        zone_close_entity_ids={
+            int(zone["id"]): str(zone.get("ha_close_entity_id") or "")
+            for zone in zones
+            if zone.get("ha_close_entity_id")
+        },
+        timeout_sec=cfg.barrier_request_timeout_sec,
+        retries=cfg.barrier_request_retries,
+        verify_tls=cfg.barrier_verify_tls,
+    )
 
     # Initial whitelist sync
     if db.is_sync_due(cfg.onec_sync_interval_hours):
@@ -538,8 +708,65 @@ def run(settings: Settings | None = None) -> None:
         except (IOError, TimeoutError) as exc:
             LOG.warning("Initial whitelist sync failed: %s", exc)
 
+    # Load cameras from database; fall back to legacy single-camera mode if none exist
+    active_cameras = db.list_cameras(is_active=True)
+
+    if not active_cameras:
+        LOG.warning(
+            "No active cameras in database. Falling back to legacy single-camera mode from settings."
+        )
+        active_cameras = [
+            {
+                "id": None,
+                "name": "legacy-single-camera",
+                "snapshot_url": cfg.camera_snapshot_url,
+                "auth_mode": cfg.camera_auth_mode,
+                "is_active": True,
+                "sort_order": 0,
+            }
+        ]
+
+    # Create camera client for each active camera
+    camera_clients: dict[int | None, SnapshotCameraClient] = {}
+    encryption_key = cfg.get_camera_credentials_encryption_key()
+
+    for camera_record in active_cameras:
+        try:
+            camera_id = camera_record.get("id")
+
+            # Get credentials: DB-backed cameras use decryption, legacy mode uses settings
+            if camera_id is not None:
+                creds = db.get_camera_credentials(camera_id, encryption_key)
+                if creds is None:
+                    LOG.error("Failed to retrieve credentials for camera %s (id=%s)", 
+                              camera_record.get("name"), camera_id)
+                    continue
+                username, password, auth_mode = creds
+            else:
+                # Legacy single-camera mode
+                username = cfg.camera_username
+                password = cfg.camera_password
+                auth_mode = cfg.camera_auth_mode
+
+            camera_clients[camera_id] = SnapshotCameraClient(
+                url=camera_record.get("snapshot_url") or cfg.camera_snapshot_url,
+                timeout_sec=cfg.request_timeout_sec,
+                retries=cfg.request_retries,
+                username=username,
+                password=password,
+                auth_mode=auth_mode,
+            )
+        except Exception as exc:  # noqa: BLE001
+            LOG.error("Failed to initialize camera %s: %s", camera_record.get("name"), exc)
+            continue
+
+    if not camera_clients:
+        LOG.error("No cameras could be initialized. Exiting.")
+        return
+
     LOG.info(
-        "Pipeline started. dry_run=%s barrier_action_mode=%s whitelist_provider=%s",
+        "Pipeline started with %d camera(s). dry_run=%s barrier_action_mode=%s whitelist_provider=%s",
+        len(camera_clients),
         cfg.dry_run_open,
         cfg.barrier_action_mode,
         provider.source,
@@ -557,117 +784,41 @@ def run(settings: Settings | None = None) -> None:
                 except (IOError, TimeoutError) as exc:
                     LOG.warning("Scheduled whitelist sync failed: %s", exc)
 
-            # Fetch frame
-            frame = camera.fetch_frame()
-            if frame is None:
-                state.close_all_zones(barrier)
-                time.sleep(cfg.poll_interval_sec)
-                continue
-
-            # Process frame (zone filtering, motion detection)
-            stage = _process_frame(
-                frame=frame,
-                prev_frame=state.prev_frame,
-                db=db,
-                cfg=cfg,
-                state=state,
-            )
-            if stage is None:
-                state.close_all_zones(barrier)
-                state.update_frame(frame)
-                time.sleep(cfg.poll_interval_sec)
-                continue
-
-            # Detect plates in zones using two-shot confirmation
-            detections: list[PlateDetection] = []
-            zone_frames: dict[int, np.ndarray] = {}
-            decision_detection: PlateDetection | None = None
-
-            if not stage.skip_alpr_this_frame:
-                first_detections, zone_frames = _detect_in_zones(
-                    frame=frame,
-                    alpr=alpr,
-                    detected_at=stage.now,
-                    frame_id=stage.frame_id,
-                    active_zones=stage.active_zones,
+            # Poll each active camera sequentially
+            for camera_id, camera_client in camera_clients.items():
+                # Find camera record for this ID
+                camera_record = next(
+                    (c for c in active_cameras if c.get("id") == camera_id),
+                    {"id": camera_id, "name": "unknown"},
                 )
-                detections.extend(first_detections)
 
-                pair_detections = first_detections
-                max_pairs = max(1, cfg.two_shot_max_pairs)
-                for pair_index in range(max_pairs):
-                    time.sleep(max(0.0, cfg.two_shot_gap_ms / 1000.0))
-
-                    second_frame = camera.fetch_frame()
-                    if second_frame is None:
-                        break
-
-                    second_detections, _ = _detect_in_zones(
-                        frame=second_frame,
+                try:
+                    _poll_single_camera(
+                        camera_record=camera_record,
+                        camera=camera_client,
                         alpr=alpr,
-                        detected_at=datetime.now(timezone.utc),
-                        frame_id=stage.frame_id,
-                        active_zones=stage.active_zones,
+                        barrier=barrier,
+                        db=db,
+                        cfg=cfg,
+                        state=state,
                     )
-                    detections.extend(second_detections)
-
-                    decision_detection = _select_two_shot_candidate(
-                        first=pair_detections,
-                        second=second_detections,
-                        min_ocr_confidence=cfg.ocr_open_threshold,
+                except Exception as exc:  # noqa: BLE001
+                    LOG.error(
+                        "Error processing camera %s (id=%s): %s",
+                        camera_record.get("name"),
+                        camera_id,
+                        exc,
                     )
-                    if decision_detection is not None:
-                        break
 
-                    pair_detections = second_detections
-
-            # Make decisions and act on detections
-            detection_result = _handle_detections(
-                detections=detections,
-                decision_detection=decision_detection,
-                db=db,
-                cfg=cfg,
-                barrier=barrier,
-                zone_states=state.zone_states,
-            )
-
-            # Manage zone hold times
-            _refresh_zone_hold(
-                detections=detections,
-                cfg=cfg,
-                state=state,
-                now_monotonic=time.monotonic(),
-                motion_detected=(not cfg.motion_detection_enabled) or (not stage.skip_alpr_this_frame),
-            )
-            state.close_all_zones(barrier)
-
-            # Generate artifacts (snapshots and preview)
-            _snapshot_stage(
-                cfg=cfg,
-                detections=detections,
-                detection_result=detection_result,
-                frame=frame,
-                zone_frames=zone_frames,
-                stage=stage,
-                alpr=alpr,
-            )
-
-            _preview_stage(
-                cfg=cfg,
-                frame=frame,
-                detections=detections,
-                detection_result=detection_result,
-                stage=stage,
-                alpr=alpr,
-                state=state,
-            )
-
-            # Prepare for next iteration
-            state.update_frame(frame)
             time.sleep(cfg.poll_interval_sec)
 
     except KeyboardInterrupt:
         LOG.info("Pipeline interrupted by user")
     finally:
-        camera.close()
+        for camera_client in camera_clients.values():
+            try:
+                camera_client.close()
+            except Exception as exc:  # noqa: BLE001
+                LOG.warning("Error closing camera client: %s", exc)
+
 

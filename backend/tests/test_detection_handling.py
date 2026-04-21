@@ -10,7 +10,7 @@ from conftest import make_detection
 def test_handle_detections_records_only_observed_without_decision(monkeypatch) -> None:
     recorded: list[tuple[str, str]] = []
 
-    def fake_record_decision_event(*, detection, decision, reason_code, db):
+    def fake_record_decision_event(*, detection, decision, reason_code, db, camera_id=None):
         recorded.append((decision, reason_code))
 
     def fail_evaluate_decision(**kwargs):
@@ -43,7 +43,7 @@ def test_handle_detections_records_final_open_and_calls_barrier(monkeypatch) -> 
     recorded: list[tuple[str, str]] = []
     barrier_calls: list[tuple[bool, str, str]] = []
 
-    def fake_record_decision_event(*, detection, decision, reason_code, db):
+    def fake_record_decision_event(*, detection, decision, reason_code, db, camera_id=None):
         recorded.append((decision, reason_code))
 
     def fake_evaluate_decision(*, plate, fuzzy_plate, db, cfg):
