@@ -103,7 +103,7 @@ class Settings:
     recognition_snapshot_dir: str = "data/recognized"
     recognition_snapshot_jpeg_quality: int = 90
     recognition_snapshot_max_files: int = 500
-    detection_zones_max: int = 3
+    detection_zones_max: int = 2
 
     motion_detection_enabled: bool = True
     motion_threshold_percent: float = 0.05

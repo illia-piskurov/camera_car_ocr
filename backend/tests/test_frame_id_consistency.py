@@ -55,6 +55,7 @@ def test_run_uses_same_frame_id_for_two_shot_cycle(monkeypatch) -> None:
         dry_run_open=True,
         barrier_action_mode="mock",
         poll_interval_sec=0.4,
+        detection_zones_max=2,
         motion_detection_enabled=False,
         motion_threshold_percent=0.05,
         motion_blur_kernel=5,

@@ -77,7 +77,7 @@ def _process_frame(
 ) -> FrameStageContext | None:
     now = datetime.now(timezone.utc)
     frame_id = uuid4().hex
-    active_zones = db.get_zones(include_disabled=False)[:3]
+    active_zones = db.get_zones(include_disabled=False)[: max(0, cfg.detection_zones_max)]
 
     if not active_zones:
         now_monotonic = time.monotonic()
