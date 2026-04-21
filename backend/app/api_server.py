@@ -290,3 +290,155 @@ def event_image(event_id: int) -> FileResponse:
         media_type="image/jpeg",
         headers={"Cache-Control": "no-store, no-cache, must-revalidate, max-age=0"},
     )
+
+
+# Camera-scoped endpoints
+@app.get("/api/cameras/{camera_id}/dashboard")
+def camera_dashboard(camera_id: int) -> dict[str, object]:
+    """Get dashboard data for a specific camera."""
+    # Verify camera exists
+    camera = db.get_camera(camera_id)
+    if camera is None:
+        raise HTTPException(status_code=404, detail=f"Camera {camera_id} not found")
+
+    now = utc_now()
+    since = now - timedelta(hours=24)
+
+    counts = db.get_decision_counts_since(since, camera_id=camera_id)
+    whitelist = db.get_whitelist_counts()
+    last_sync = db.get_last_sync_at()
+    recent_events = db.get_recent_events(limit=20, camera_id=camera_id)
+
+    avg_confidence = 0.0
+    confidence_values = [
+        float(item.get("vote_avg_confidence") or 0.0)
+        for item in recent_events
+        if item.get("decision") in {"open", "deny"}
+    ]
+    if confidence_values:
+        avg_confidence = sum(confidence_values) / len(confidence_values)
+
+    sync_age_seconds: int | None = None
+    if last_sync is not None:
+        sync_age_seconds = int((now - last_sync).total_seconds())
+
+    return {
+        "generated_at": now.isoformat(),
+        "camera": {
+            "id": camera_id,
+            "name": camera.get("name"),
+        },
+        "mode": {
+            "dry_run_open": cfg.dry_run_open,
+            "barrier_action_mode": cfg.barrier_action_mode,
+            "barrier_close_delay_sec": cfg.barrier_close_delay_sec,
+            "barrier_live_configured": cfg.is_barrier_live_configured(),
+            "zone1_barrier_configured": cfg.has_zone_barrier_entities(1),
+            "zone2_barrier_configured": cfg.has_zone_barrier_entities(2),
+            "zone1_close_delay_sec": cfg.get_zone_close_delay_sec(1),
+            "zone2_close_delay_sec": cfg.get_zone_close_delay_sec(2),
+            "ocr_open_threshold": cfg.ocr_open_threshold,
+            "ocr_extend_threshold": cfg.ocr_extend_threshold,
+            "two_shot_gap_ms": cfg.two_shot_gap_ms,
+            "two_shot_max_pairs": cfg.two_shot_max_pairs,
+            "decision_model_version": "two-shot-v1",
+            "legacy_config_deprecated": False,
+        },
+        "sync": {
+            "source": provider.source,
+            "last_sync_at": last_sync.isoformat() if last_sync else None,
+            "sync_age_seconds": sync_age_seconds,
+            "is_due": db.is_sync_due(cfg.onec_sync_interval_hours),
+        },
+        "whitelist": whitelist,
+        "kpi_24h": {
+            "open": counts.get("open", 0),
+            "deny": counts.get("deny", 0),
+            "observed": counts.get("observed", 0),
+            "avg_confidence": avg_confidence,
+        },
+        "recent_events": recent_events,
+    }
+
+
+@app.get("/api/cameras/{camera_id}/zones")
+def get_camera_zones(camera_id: int) -> dict[str, object]:
+    """Get zones for a specific camera."""
+    # Verify camera exists
+    camera = db.get_camera(camera_id)
+    if camera is None:
+        raise HTTPException(status_code=404, detail=f"Camera {camera_id} not found")
+
+    return {
+        "max_zones": cfg.detection_zones_max,
+        "zones": db.get_zones(include_disabled=True, camera_id=camera_id),
+    }
+
+
+@app.put("/api/cameras/{camera_id}/zones")
+def put_camera_zones(camera_id: int, payload: ZonesPayload) -> dict[str, object]:
+    """Update zones for a specific camera."""
+    # Verify camera exists
+    camera = db.get_camera(camera_id)
+    if camera is None:
+        raise HTTPException(status_code=404, detail=f"Camera {camera_id} not found")
+
+    if len(payload.zones) > cfg.detection_zones_max:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Maximum {cfg.detection_zones_max} zones are allowed",
+        )
+
+    sanitized = [
+        sanitize_zone(zone.model_dump(), default_name=f"Zone {index + 1}")
+        for index, zone in enumerate(payload.zones)
+    ]
+    saved = db.replace_zones(sanitized, camera_id=camera_id, max_zones=cfg.detection_zones_max)
+    return {
+        "status": "ok",
+        "max_zones": cfg.detection_zones_max,
+        "zones": saved,
+    }
+
+
+@app.get("/api/cameras/{camera_id}/preview")
+def camera_preview_meta(camera_id: int) -> dict[str, object]:
+    """Get preview metadata for a specific camera."""
+    # Verify camera exists
+    camera = db.get_camera(camera_id)
+    if camera is None:
+        raise HTTPException(status_code=404, detail=f"Camera {camera_id} not found")
+
+    meta = _read_preview_meta()
+    available = os.path.exists(cfg.preview_image_path)
+    captured_at = meta.get("captured_at")
+
+    return {
+        "available": available,
+        "captured_at": captured_at if isinstance(captured_at, str) else None,
+        "has_detections": bool(meta.get("has_detections", False)),
+        "last_plate": meta.get("last_plate") if isinstance(meta.get("last_plate"), str) else None,
+        "last_decision": meta.get("last_decision") if isinstance(meta.get("last_decision"), str) else None,
+        "zones": db.get_zones(include_disabled=True, camera_id=camera_id),
+        "max_zones": cfg.detection_zones_max,
+        "image_url": f"/api/cameras/{camera_id}/preview/image" if available else None,
+        "version": captured_at if isinstance(captured_at, str) else None,
+    }
+
+
+@app.get("/api/cameras/{camera_id}/preview/image")
+def camera_preview_image(camera_id: int) -> FileResponse:
+    """Get preview image for a specific camera."""
+    # Verify camera exists
+    camera = db.get_camera(camera_id)
+    if camera is None:
+        raise HTTPException(status_code=404, detail=f"Camera {camera_id} not found")
+
+    if not os.path.exists(cfg.preview_image_path):
+        raise HTTPException(status_code=404, detail="Preview image not available yet")
+
+    return FileResponse(
+        cfg.preview_image_path,
+        media_type="image/jpeg",
+        headers={"Cache-Control": "no-store, no-cache, must-revalidate, max-age=0"},
+    )

@@ -8,7 +8,7 @@ import { PreviewWithZones } from "@/components/PreviewWithZones"
 import { ZonesPanel } from "@/components/ZonesPanel"
 import { EventsTable } from "@/components/EventsTable"
 import { OnboardingPanel } from "@/components/OnboardingPanel"
-import { saveZones, toEventImageSrc } from "@/lib/api"
+import { saveZones, saveCameraZones, toEventImageSrc } from "@/lib/api"
 import { useDashboard } from "@/hooks/use-dashboard"
 import type { Camera, DetectionZone } from "@/lib/types"
 
@@ -57,7 +57,11 @@ export default function Page() {
     setZonesSaving(true)
     setZonesMessage(null)
     try {
-      await saveZones(zoneDraft)
+      if (selectedCameraId) {
+        await saveCameraZones(selectedCameraId, zoneDraft)
+      } else {
+        await saveZones(zoneDraft)
+      }
       setZonesDirty(false)
       setZonesMessage("Zones saved")
       await refresh()
@@ -106,8 +110,8 @@ export default function Page() {
                 key={camera.id}
                 onClick={() => setSelectedCameraId(camera.id)}
                 className={`px-4 py-2 rounded font-medium transition-colors ${selectedCameraId === camera.id
-                    ? "bg-blue-600 text-white"
-                    : "bg-zinc-800 text-zinc-300 hover:bg-zinc-700"
+                  ? "bg-blue-600 text-white"
+                  : "bg-zinc-800 text-zinc-300 hover:bg-zinc-700"
                   }`}
               >
                 {camera.name}

@@ -76,6 +76,20 @@ export async function fetchDashboard(signal?: AbortSignal): Promise<DashboardDat
     return (await response.json()) as DashboardData
 }
 
+export async function fetchCameraDashboard(cameraId: number, signal?: AbortSignal): Promise<DashboardData> {
+    const response = await fetch(`${API_BASE}/api/cameras/${cameraId}/dashboard`, {
+        method: "GET",
+        cache: "no-store",
+        signal,
+    })
+
+    if (!response.ok) {
+        throw new Error(`Camera dashboard request failed: ${response.status}`)
+    }
+
+    return (await response.json()) as DashboardData
+}
+
 export async function forceSync(): Promise<ForceSyncResult> {
     const response = await fetch(`${API_BASE}/api/sync/force`, {
         method: "POST",
@@ -103,6 +117,20 @@ export async function fetchPreview(signal?: AbortSignal): Promise<PreviewData> {
     return (await response.json()) as PreviewData
 }
 
+export async function fetchCameraPreview(cameraId: number, signal?: AbortSignal): Promise<PreviewData> {
+    const response = await fetch(`${API_BASE}/api/cameras/${cameraId}/preview`, {
+        method: "GET",
+        cache: "no-store",
+        signal,
+    })
+
+    if (!response.ok) {
+        throw new Error(`Camera preview request failed: ${response.status}`)
+    }
+
+    return (await response.json()) as PreviewData
+}
+
 export async function fetchZones(signal?: AbortSignal): Promise<ZonesResponse> {
     const response = await fetch(`${API_BASE}/api/zones`, {
         method: "GET",
@@ -112,6 +140,20 @@ export async function fetchZones(signal?: AbortSignal): Promise<ZonesResponse> {
 
     if (!response.ok) {
         throw new Error(`Zones request failed: ${response.status}`)
+    }
+
+    return (await response.json()) as ZonesResponse
+}
+
+export async function fetchCameraZones(cameraId: number, signal?: AbortSignal): Promise<ZonesResponse> {
+    const response = await fetch(`${API_BASE}/api/cameras/${cameraId}/zones`, {
+        method: "GET",
+        cache: "no-store",
+        signal,
+    })
+
+    if (!response.ok) {
+        throw new Error(`Camera zones request failed: ${response.status}`)
     }
 
     return (await response.json()) as ZonesResponse
@@ -129,6 +171,23 @@ export async function saveZones(zones: ZonesResponse["zones"]): Promise<SaveZone
 
     if (!response.ok) {
         throw new Error(`Save zones failed: ${response.status}`)
+    }
+
+    return (await response.json()) as SaveZonesResponse
+}
+
+export async function saveCameraZones(cameraId: number, zones: ZonesResponse["zones"]): Promise<SaveZonesResponse> {
+    const response = await fetch(`${API_BASE}/api/cameras/${cameraId}/zones`, {
+        method: "PUT",
+        cache: "no-store",
+        headers: {
+            "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ zones }),
+    })
+
+    if (!response.ok) {
+        throw new Error(`Save camera zones failed: ${response.status}`)
     }
 
     return (await response.json()) as SaveZonesResponse

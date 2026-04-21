@@ -2,7 +2,15 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 
-import { fetchDashboard, fetchPreview, forceSync, listCameras, toPreviewImageSrc } from "@/lib/api"
+import {
+    fetchDashboard,
+    fetchCameraDashboard,
+    fetchPreview,
+    fetchCameraPreview,
+    forceSync,
+    listCameras,
+    toPreviewImageSrc,
+} from "@/lib/api"
 import type { Camera, DashboardData, PreviewData } from "@/lib/types"
 
 type UseDashboardState = {
@@ -38,9 +46,16 @@ export function useDashboard(selectedCameraId?: number | null) {
 
         const controller = new AbortController()
         try {
+            const dashboardPromise = selectedCameraId
+                ? fetchCameraDashboard(selectedCameraId, controller.signal)
+                : fetchDashboard(controller.signal)
+            const previewPromise = selectedCameraId
+                ? fetchCameraPreview(selectedCameraId, controller.signal).catch(() => null)
+                : fetchPreview(controller.signal).catch(() => null)
+
             const [data, preview, cameras] = await Promise.all([
-                fetchDashboard(controller.signal),
-                fetchPreview(controller.signal).catch(() => null),
+                dashboardPromise,
+                previewPromise,
                 listCameras(controller.signal),
             ])
 

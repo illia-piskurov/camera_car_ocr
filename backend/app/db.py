@@ -3,7 +3,7 @@ from __future__ import annotations
 import os
 from datetime import datetime, timedelta, timezone
 
-from sqlalchemy import Boolean, DateTime, Float, Integer, String, create_engine, event, func, select, text
+from sqlalchemy import Boolean, DateTime, Float, Integer, String, create_engine, event, func, select
 from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column, sessionmaker
 
 from .security import decrypt_text, encrypt_text
@@ -122,53 +122,6 @@ class Database:
 
     def init(self) -> None:
         Base.metadata.create_all(self.engine)
-        self._ensure_runtime_migrations()
-
-    def _table_columns(self, table_name: str) -> set[str]:
-        with self.engine.connect() as conn:
-            rows = conn.execute(text(f"PRAGMA table_info({table_name})")).all()
-        return {str(row[1]) for row in rows}
-
-    def _add_column_if_missing(self, table_name: str, column_name: str, ddl: str) -> None:
-        columns = self._table_columns(table_name)
-        if column_name in columns:
-            return
-
-        with self.engine.begin() as conn:
-            conn.execute(text(f"ALTER TABLE {table_name} ADD COLUMN {ddl}"))
-
-    def _ensure_runtime_migrations(self) -> None:
-        # Lightweight idempotent migrations for existing SQLite DBs.
-        self._add_column_if_missing(
-            "detection_zones",
-            "camera_id",
-            "camera_id INTEGER",
-        )
-        self._add_column_if_missing(
-            "detection_zones",
-            "ha_open_entity_id",
-            "ha_open_entity_id VARCHAR(128) DEFAULT ''",
-        )
-        self._add_column_if_missing(
-            "detection_zones",
-            "ha_close_entity_id",
-            "ha_close_entity_id VARCHAR(128) DEFAULT ''",
-        )
-        self._add_column_if_missing(
-            "recognition_events",
-            "camera_id",
-            "camera_id INTEGER",
-        )
-        self._add_column_if_missing(
-            "recognition_events",
-            "zone_id",
-            "zone_id INTEGER",
-        )
-        self._add_column_if_missing(
-            "recognition_events",
-            "zone_name",
-            "zone_name VARCHAR(64)",
-        )
 
     def _camera_row(self, row: Camera) -> dict[str, object]:
         return {
@@ -382,6 +335,8 @@ class Database:
             stmt = select(DetectionZone).order_by(DetectionZone.sort_order.asc(), DetectionZone.id.asc())
             if camera_id is not None:
                 stmt = stmt.where(DetectionZone.camera_id == camera_id)
+            else:
+                stmt = stmt.where(DetectionZone.camera_id.is_(None))
             if not include_disabled:
                 stmt = stmt.where(DetectionZone.is_enabled.is_(True))
 
