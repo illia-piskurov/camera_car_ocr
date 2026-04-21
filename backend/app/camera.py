@@ -35,7 +35,8 @@ class SnapshotCameraClient:
 
         self._client = httpx.Client(timeout=self.timeout_sec, auth=auth)
 
-    def fetch_frame(self) -> np.ndarray | None:
+    def probe_frame(self) -> tuple[np.ndarray | None, str | None]:
+        last_error: str | None = None
         for attempt in range(1, self.retries + 2):
             try:
                 response = self._client.get(self.url)
@@ -43,15 +44,23 @@ class SnapshotCameraClient:
                 img_array = np.frombuffer(response.content, dtype=np.uint8)
                 frame = cv2.imdecode(img_array, cv2.IMREAD_COLOR)
                 if frame is None:
+                    last_error = "invalid image bytes"
                     LOG.warning("Camera returned invalid image bytes")
-                return frame
+                    continue
+                return frame, None
             except Exception as exc:  # noqa: BLE001
                 if isinstance(exc, httpx.HTTPStatusError):
                     status_code = exc.response.status_code if exc.response is not None else "n/a"
+                    last_error = f"HTTP {status_code}"
                     LOG.warning("Snapshot fetch failed (attempt %s): HTTP %s", attempt, status_code)
                 else:
+                    last_error = exc.__class__.__name__
                     LOG.warning("Snapshot fetch failed (attempt %s): %s", attempt, exc.__class__.__name__)
-        return None
+        return None, last_error
+
+    def fetch_frame(self) -> np.ndarray | None:
+        frame, _ = self.probe_frame()
+        return frame
 
     def close(self) -> None:
         self._client.close()

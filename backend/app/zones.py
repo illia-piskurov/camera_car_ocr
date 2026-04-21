@@ -9,6 +9,8 @@ import numpy as np
 class ZonePayload(TypedDict):
     id: int
     name: str
+    ha_open_entity_id: str
+    ha_close_entity_id: str
     x_min: float
     y_min: float
     x_max: float
@@ -54,6 +56,8 @@ def sanitize_zone(raw: dict[str, object], default_name: str) -> dict[str, object
 
     return {
         "name": str(raw.get("name") or default_name),
+        "ha_open_entity_id": str(raw.get("ha_open_entity_id") or raw.get("open_entity_id") or ""),
+        "ha_close_entity_id": str(raw.get("ha_close_entity_id") or raw.get("close_entity_id") or ""),
         "x_min": x_min,
         "y_min": y_min,
         "x_max": x_max,

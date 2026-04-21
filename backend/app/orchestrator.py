@@ -147,13 +147,20 @@ def _detect_in_zones(
         if zone_id is not None:
             zone_frames[zone_id] = zone_frame
 
+        zone_label = str(
+            zone.get("ha_open_entity_id")
+            or zone.get("ha_close_entity_id")
+            or zone.get("name")
+            or ""
+        )
+
         detections.extend(
             alpr.detect(
                 zone_frame,
                 detected_at=detected_at,
                 frame_id=frame_id,
                 zone_id=zone_id,
-                zone_name=str(zone.get("name") or ""),
+                zone_name=zone_label,
             )
         )
 
@@ -342,18 +349,21 @@ def _initialize_pipeline(
         LOG.error("Failed to initialize ALPR models: %s", exc)
         raise
 
+    zones = db.get_zones(include_disabled=True)
     barrier = BarrierController(
         dry_run=cfg.dry_run_open,
         action_mode=cfg.barrier_action_mode,
         ha_base_url=cfg.barrier_ha_base_url,
         ha_token=cfg.barrier_ha_token,
         zone_open_entity_ids={
-            1: cfg.zone1_barrier_open_entity_id,
-            2: cfg.zone2_barrier_open_entity_id,
+            int(zone["id"]): str(zone.get("ha_open_entity_id") or "")
+            for zone in zones
+            if zone.get("ha_open_entity_id")
         },
         zone_close_entity_ids={
-            1: cfg.zone1_barrier_close_entity_id,
-            2: cfg.zone2_barrier_close_entity_id,
+            int(zone["id"]): str(zone.get("ha_close_entity_id") or "")
+            for zone in zones
+            if zone.get("ha_close_entity_id")
         },
         timeout_sec=cfg.barrier_request_timeout_sec,
         retries=cfg.barrier_request_retries,

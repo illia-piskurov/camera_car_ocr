@@ -10,6 +10,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 
+from .camera import SnapshotCameraClient
 from .config import Settings
 from .db import Database, utc_now
 from .onec_provider import create_whitelist_provider
@@ -34,6 +35,8 @@ app.add_middleware(
 class ZoneInput(BaseModel):
     id: int | None = None
     name: str | None = None
+    ha_open_entity_id: str = Field(default="")
+    ha_close_entity_id: str = Field(default="")
     x_min: float = Field(ge=0.0, le=1.0)
     y_min: float = Field(ge=0.0, le=1.0)
     x_max: float = Field(ge=0.0, le=1.0)
@@ -44,6 +47,16 @@ class ZoneInput(BaseModel):
 
 class ZonesPayload(BaseModel):
     zones: list[ZoneInput] = Field(default_factory=list)
+
+
+class CameraInput(BaseModel):
+    name: str = Field(min_length=1, max_length=128)
+    snapshot_url: str = Field(min_length=1, max_length=512)
+    username: str = Field(default="")
+    password: str = Field(default="")
+    auth_mode: str = Field(default="digest")
+    is_active: bool = True
+    sort_order: int | None = None
 
 
 def _read_preview_meta() -> dict[str, object]:
@@ -79,6 +92,46 @@ def health() -> dict[str, object]:
         "service": "backend",
         "db": "ok" if db_ok else "unreachable",
     }
+
+
+@app.get("/api/cameras")
+def list_cameras() -> dict[str, object]:
+    return {"cameras": db.list_cameras()}
+
+
+@app.post("/api/cameras/validate")
+def validate_camera(payload: CameraInput) -> dict[str, object]:
+    client = SnapshotCameraClient(
+        url=payload.snapshot_url,
+        timeout_sec=cfg.request_timeout_sec,
+        retries=cfg.request_retries,
+        username=payload.username,
+        password=payload.password,
+        auth_mode=payload.auth_mode,
+    )
+    frame, error = client.probe_frame()
+    if frame is None:
+        raise HTTPException(status_code=400, detail=f"Camera validation failed: {error or 'unreachable'}")
+    return {"status": "ok", "available": True}
+
+
+@app.post("/api/cameras")
+def create_camera(payload: CameraInput) -> dict[str, object]:
+    validation = validate_camera(payload)
+    if validation.get("status") != "ok":
+        raise HTTPException(status_code=400, detail="Camera validation failed")
+
+    camera = db.create_camera(
+        name=payload.name,
+        snapshot_url=payload.snapshot_url,
+        username=payload.username,
+        password=payload.password,
+        auth_mode=payload.auth_mode,
+        encryption_key=cfg.get_camera_credentials_encryption_key(),
+        is_active=payload.is_active,
+        sort_order=payload.sort_order,
+    )
+    return {"status": "ok", "camera": camera}
 
 
 @app.get("/api/dashboard")
