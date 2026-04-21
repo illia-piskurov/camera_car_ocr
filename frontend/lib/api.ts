@@ -1,6 +1,66 @@
-import type { DashboardData, ForceSyncResult, PreviewData, SaveZonesResponse, ZonesResponse } from "@/lib/types"
+import type {
+    Camera,
+    CameraCreatePayload,
+    DashboardData,
+    ForceSyncResult,
+    PreviewData,
+    SaveZonesResponse,
+    ZonesResponse,
+} from "@/lib/types"
 
 const API_BASE = process.env.NEXT_PUBLIC_BACKEND_API_BASE ?? "http://127.0.0.1:8000"
+
+export async function listCameras(signal?: AbortSignal): Promise<Camera[]> {
+    const response = await fetch(`${API_BASE}/api/cameras`, {
+        method: "GET",
+        cache: "no-store",
+        signal,
+    })
+
+    if (!response.ok) {
+        throw new Error(`List cameras failed: ${response.status}`)
+    }
+
+    const data = (await response.json()) as { cameras: Camera[] }
+    return data.cameras
+}
+
+export async function validateCamera(payload: CameraCreatePayload, signal?: AbortSignal): Promise<{ status: string; available: boolean }> {
+    const response = await fetch(`${API_BASE}/api/cameras/validate`, {
+        method: "POST",
+        cache: "no-store",
+        headers: {
+            "Content-Type": "application/json",
+        },
+        body: JSON.stringify(payload),
+        signal,
+    })
+
+    if (!response.ok) {
+        const errorText = await response.text()
+        throw new Error(`Camera validation failed: ${errorText}`)
+    }
+
+    return (await response.json()) as { status: string; available: boolean }
+}
+
+export async function createCamera(payload: CameraCreatePayload): Promise<{ status: string; camera: Camera }> {
+    const response = await fetch(`${API_BASE}/api/cameras`, {
+        method: "POST",
+        cache: "no-store",
+        headers: {
+            "Content-Type": "application/json",
+        },
+        body: JSON.stringify(payload),
+    })
+
+    if (!response.ok) {
+        const errorText = await response.text()
+        throw new Error(`Create camera failed: ${errorText}`)
+    }
+
+    return (await response.json()) as { status: string; camera: Camera }
+}
 
 export async function fetchDashboard(signal?: AbortSignal): Promise<DashboardData> {
     const response = await fetch(`${API_BASE}/api/dashboard`, {

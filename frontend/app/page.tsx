@@ -7,9 +7,10 @@ import { ControlRoomHeader } from "@/components/ControlRoomHeader"
 import { PreviewWithZones } from "@/components/PreviewWithZones"
 import { ZonesPanel } from "@/components/ZonesPanel"
 import { EventsTable } from "@/components/EventsTable"
+import { OnboardingPanel } from "@/components/OnboardingPanel"
 import { saveZones, toEventImageSrc } from "@/lib/api"
 import { useDashboard } from "@/hooks/use-dashboard"
-import type { DetectionZone } from "@/lib/types"
+import type { Camera, DetectionZone } from "@/lib/types"
 
 function formatTime(value: string | null | undefined) {
   if (!value) {
@@ -19,14 +20,23 @@ function formatTime(value: string | null | undefined) {
 }
 
 export default function Page() {
-  const { data, preview, previewImageSrc, loading, error, refreshing, isStale, syncAgeSec, refresh, runForceSync } =
-    useDashboard()
+  const [selectedCameraId, setSelectedCameraId] = useState<number | null>(null)
+  const { data, preview, previewImageSrc, cameras, loading, error, refreshing, isStale, syncAgeSec, refresh, runForceSync } =
+    useDashboard(selectedCameraId)
   const [selectedEventId, setSelectedEventId] = useState<number | null>(null)
   const [selectedImageError, setSelectedImageError] = useState<string | null>(null)
   const [zoneDraft, setZoneDraft] = useState<DetectionZone[]>([])
   const [zonesDirty, setZonesDirty] = useState(false)
   const [zonesSaving, setZonesSaving] = useState(false)
   const [zonesMessage, setZonesMessage] = useState<string | null>(null)
+
+  // Set default camera on first load
+  useEffect(() => {
+    if (cameras.length > 0 && selectedCameraId === null) {
+      const activeCamera = cameras.find((c) => c.is_active)
+      setSelectedCameraId(activeCamera?.id ?? cameras[0]?.id ?? null)
+    }
+  }, [cameras, selectedCameraId])
 
   useEffect(() => {
     if (!zonesDirty && preview?.zones) {
@@ -37,6 +47,11 @@ export default function Page() {
   const selectedEvent = data?.recent_events.find((event) => event.id === selectedEventId) ?? null
   const selectedImageSrc = selectedEventId !== null ? toEventImageSrc(selectedEventId) : null
   const maxZones = preview?.max_zones ?? 2
+
+  // Show onboarding if no cameras
+  if (!loading && cameras.length === 0) {
+    return <OnboardingPanel onCameraAdded={() => refresh()} />
+  }
 
   async function handleSaveZones() {
     setZonesSaving(true)
@@ -79,9 +94,35 @@ export default function Page() {
     setZonesMessage(null)
   }
 
+
   return (
     <main className="min-h-svh bg-gradient-to-b from-slate-950 via-zinc-900 to-zinc-950 text-zinc-100">
       <div className="mx-auto flex w-full max-w-7xl flex-col gap-5 px-4 py-6 sm:px-6 lg:px-8">
+        {/* Camera Tabs */}
+        {cameras.length > 0 && (
+          <div className="flex flex-wrap items-center gap-2 border-b border-zinc-700 pb-4">
+            {cameras.map((camera) => (
+              <button
+                key={camera.id}
+                onClick={() => setSelectedCameraId(camera.id)}
+                className={`px-4 py-2 rounded font-medium transition-colors ${selectedCameraId === camera.id
+                    ? "bg-blue-600 text-white"
+                    : "bg-zinc-800 text-zinc-300 hover:bg-zinc-700"
+                  }`}
+              >
+                {camera.name}
+              </button>
+            ))}
+            <button
+              onClick={() => refresh()}
+              className="ml-auto px-3 py-2 text-sm text-zinc-400 hover:text-zinc-200 transition-colors"
+              title="Add camera"
+            >
+              + Add Camera
+            </button>
+          </div>
+        )}
+
         {/* Row 1: Header */}
         <ControlRoomHeader
           syncAgeSec={syncAgeSec}
