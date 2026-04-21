@@ -36,7 +36,7 @@ export default function Page() {
 
   const selectedEvent = data?.recent_events.find((event) => event.id === selectedEventId) ?? null
   const selectedImageSrc = selectedEventId !== null ? toEventImageSrc(selectedEventId) : null
-  const maxZones = preview?.max_zones ?? 3
+  const maxZones = preview?.max_zones ?? 2
 
   async function handleSaveZones() {
     setZonesSaving(true)

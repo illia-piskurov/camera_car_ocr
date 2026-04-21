@@ -29,9 +29,19 @@ export type DashboardData = {
     generated_at: string
     mode: {
         dry_run_open: boolean
-        min_confirmations: number
-        min_avg_confidence: number
-        voting_window_sec: number
+        barrier_action_mode: string
+        barrier_close_delay_sec: number
+        barrier_live_configured: boolean
+        zone1_barrier_configured: boolean
+        zone2_barrier_configured: boolean
+        zone1_close_delay_sec: number
+        zone2_close_delay_sec: number
+        ocr_open_threshold: number
+        ocr_extend_threshold: number
+        two_shot_gap_ms: number
+        two_shot_max_pairs: number
+        decision_model_version: string
+        legacy_config_deprecated: boolean
     }
     sync: {
         last_sync_at: string | null

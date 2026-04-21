@@ -228,7 +228,7 @@ class Database:
             )
             session.commit()
 
-    def replace_zones(self, zones: list[dict[str, object]], max_zones: int = 3) -> list[dict[str, object]]:
+    def replace_zones(self, zones: list[dict[str, object]], max_zones: int = 2) -> list[dict[str, object]]:
         limited = zones[: max(0, max_zones)]
         with self.SessionLocal() as session:
             session.query(DetectionZone).delete()

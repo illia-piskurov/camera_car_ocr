@@ -63,16 +63,25 @@ class Settings:
     detector_model: str = "yolo-v9-t-384-license-plate-end2end"
     ocr_model: str = "global-plates-mobile-vit-v2-model"
 
-    voting_window_sec: float = 4.0
-    min_confirmations: int = 2
-    min_avg_confidence: float = 0.80
-    fast_open_enabled: bool = True
-    fast_open_confidence: float = 0.91
+    ocr_open_threshold: float = 0.92
+    ocr_extend_threshold: float = 0.80
+    two_shot_gap_ms: int = 200
+    two_shot_max_pairs: int = 2
 
-    plate_cooldown_sec: float = 10.0
-    global_cooldown_sec: float = 2.0
     dry_run_open: bool = True
     barrier_action_mode: str = "mock"
+    barrier_ha_base_url: str = ""
+    barrier_ha_token: str = ""
+    zone1_barrier_open_entity_id: str = ""
+    zone1_barrier_close_entity_id: str = ""
+    zone1_barrier_close_delay_sec: float = 0.0
+    zone2_barrier_open_entity_id: str = ""
+    zone2_barrier_close_entity_id: str = ""
+    zone2_barrier_close_delay_sec: float = 0.0
+    barrier_request_timeout_sec: float = 3.0
+    barrier_request_retries: int = 2
+    barrier_verify_tls: bool = True
+    barrier_close_delay_sec: float = 5.0
 
     db_path: str = "data/app.db"
     onec_sync_interval_hours: float = 24.0
@@ -94,11 +103,34 @@ class Settings:
     recognition_snapshot_dir: str = "data/recognized"
     recognition_snapshot_jpeg_quality: int = 90
     recognition_snapshot_max_files: int = 500
-    detection_zones_max: int = 3
+    detection_zones_max: int = 2
 
     motion_detection_enabled: bool = True
     motion_threshold_percent: float = 0.05
     motion_blur_kernel: int = 5
+
+    def has_zone_barrier_entities(self, zone_id: int) -> bool:
+        open_id, close_id = self.get_zone_barrier_entities(zone_id)
+        return bool(open_id and close_id)
+
+    def is_barrier_live_configured(self) -> bool:
+        if not self.barrier_ha_base_url or not self.barrier_ha_token:
+            return False
+        return self.has_zone_barrier_entities(1) or self.has_zone_barrier_entities(2)
+
+    def get_zone_barrier_entities(self, zone_id: int | None) -> tuple[str, str]:
+        if zone_id == 1:
+            return self.zone1_barrier_open_entity_id, self.zone1_barrier_close_entity_id
+        if zone_id == 2:
+            return self.zone2_barrier_open_entity_id, self.zone2_barrier_close_entity_id
+        return "", ""
+
+    def get_zone_close_delay_sec(self, zone_id: int | None) -> float:
+        if zone_id == 1 and self.zone1_barrier_close_delay_sec > 0:
+            return self.zone1_barrier_close_delay_sec
+        if zone_id == 2 and self.zone2_barrier_close_delay_sec > 0:
+            return self.zone2_barrier_close_delay_sec
+        return self.barrier_close_delay_sec
 
     @staticmethod
     def from_env() -> "Settings":
@@ -113,15 +145,48 @@ class Settings:
             request_retries=int(os.getenv("REQUEST_RETRIES", Settings.request_retries)),
             detector_model=os.getenv("DETECTOR_MODEL", Settings.detector_model),
             ocr_model=os.getenv("OCR_MODEL", Settings.ocr_model),
-            voting_window_sec=float(os.getenv("VOTING_WINDOW_SEC", Settings.voting_window_sec)),
-            min_confirmations=int(os.getenv("MIN_CONFIRMATIONS", Settings.min_confirmations)),
-            min_avg_confidence=float(os.getenv("MIN_AVG_CONFIDENCE", Settings.min_avg_confidence)),
-            fast_open_enabled=os.getenv("FAST_OPEN_ENABLED", "1") in {"1", "true", "True"},
-            fast_open_confidence=float(os.getenv("FAST_OPEN_CONFIDENCE", Settings.fast_open_confidence)),
-            plate_cooldown_sec=float(os.getenv("PLATE_COOLDOWN_SEC", Settings.plate_cooldown_sec)),
-            global_cooldown_sec=float(os.getenv("GLOBAL_COOLDOWN_SEC", Settings.global_cooldown_sec)),
+            ocr_open_threshold=float(
+                os.getenv("OCR_OPEN_THRESHOLD", Settings.ocr_open_threshold)
+            ),
+            ocr_extend_threshold=float(
+                os.getenv("OCR_EXTEND_THRESHOLD", Settings.ocr_extend_threshold)
+            ),
+            two_shot_gap_ms=int(os.getenv("TWO_SHOT_GAP_MS", Settings.two_shot_gap_ms)),
+            two_shot_max_pairs=int(
+                os.getenv("TWO_SHOT_MAX_PAIRS", Settings.two_shot_max_pairs)
+            ),
             dry_run_open=os.getenv("DRY_RUN_OPEN", "1") in {"1", "true", "True"},
             barrier_action_mode=os.getenv("BARRIER_ACTION_MODE", Settings.barrier_action_mode),
+            barrier_ha_base_url=os.getenv("BARRIER_HA_BASE_URL", Settings.barrier_ha_base_url),
+            barrier_ha_token=os.getenv("BARRIER_HA_TOKEN", Settings.barrier_ha_token),
+            zone1_barrier_open_entity_id=os.getenv(
+                "ZONE1_BARRIER_OPEN_ENTITY_ID", Settings.zone1_barrier_open_entity_id
+            ),
+            zone1_barrier_close_entity_id=os.getenv(
+                "ZONE1_BARRIER_CLOSE_ENTITY_ID", Settings.zone1_barrier_close_entity_id
+            ),
+            zone1_barrier_close_delay_sec=float(
+                os.getenv("ZONE1_BARRIER_CLOSE_DELAY_SEC", Settings.zone1_barrier_close_delay_sec)
+            ),
+            zone2_barrier_open_entity_id=os.getenv(
+                "ZONE2_BARRIER_OPEN_ENTITY_ID", Settings.zone2_barrier_open_entity_id
+            ),
+            zone2_barrier_close_entity_id=os.getenv(
+                "ZONE2_BARRIER_CLOSE_ENTITY_ID", Settings.zone2_barrier_close_entity_id
+            ),
+            zone2_barrier_close_delay_sec=float(
+                os.getenv("ZONE2_BARRIER_CLOSE_DELAY_SEC", Settings.zone2_barrier_close_delay_sec)
+            ),
+            barrier_request_timeout_sec=float(
+                os.getenv("BARRIER_REQUEST_TIMEOUT_SEC", Settings.barrier_request_timeout_sec)
+            ),
+            barrier_request_retries=int(
+                os.getenv("BARRIER_REQUEST_RETRIES", Settings.barrier_request_retries)
+            ),
+            barrier_verify_tls=os.getenv("BARRIER_VERIFY_TLS", "1") in {"1", "true", "True"},
+            barrier_close_delay_sec=float(
+                os.getenv("BARRIER_CLOSE_DELAY_SEC", Settings.barrier_close_delay_sec)
+            ),
             db_path=os.getenv("DB_PATH", Settings.db_path),
             onec_sync_interval_hours=float(
                 os.getenv("ONEC_SYNC_INTERVAL_HOURS", Settings.onec_sync_interval_hours)

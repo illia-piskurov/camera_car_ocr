@@ -90,7 +90,7 @@ export function DashboardSidebar({
                         )}
                     </div>
                     <p className="mt-2 text-xs text-zinc-400">
-                        Confirmations: {data?.mode.min_confirmations ?? "-"}
+                        Model: {data?.mode.decision_model_version ?? "-"}
                     </p>
                 </article>
 
@@ -156,8 +156,8 @@ export function DashboardSidebar({
                                 <button
                                     type="button"
                                     className={`flex h-6 w-6 flex-shrink-0 rounded border transition ${zone.is_enabled
-                                            ? "border-emerald-500/30 bg-emerald-500/20 text-emerald-300"
-                                            : "border-zinc-700 bg-zinc-700/30 text-zinc-500"
+                                        ? "border-emerald-500/30 bg-emerald-500/20 text-emerald-300"
+                                        : "border-zinc-700 bg-zinc-700/30 text-zinc-500"
                                         }`}
                                     onClick={() => onUpdateZone(index, (prev) => ({ ...prev, is_enabled: !prev.is_enabled }))}
                                     title={zone.is_enabled ? "Disable zone" : "Enable zone"}
