@@ -108,7 +108,6 @@ export default function Page() {
       .map((zone, zoneIndex) => ({
         ...zone,
         sort_order: zoneIndex,
-        name: zone.name || `Zone ${zoneIndex + 1}`,
       }))
     setZoneDraft(updated)
     setZonesDirty(true)

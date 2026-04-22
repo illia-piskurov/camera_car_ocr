@@ -20,7 +20,7 @@ export type CameraCreatePayload = {
 
 export type DetectionZone = {
     id: number
-    name: string
+    name?: string
     x_min: number
     y_min: number
     x_max: number

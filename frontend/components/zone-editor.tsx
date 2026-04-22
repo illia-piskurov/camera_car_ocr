@@ -19,6 +19,25 @@ type ZoneEditorProps = {
     onChangeZones: (zones: DetectionZone[]) => void
 }
 
+function zoneLabel(zone: DetectionZone, index: number): string {
+    const name = (zone.name ?? "").trim()
+    if (name) {
+        return name
+    }
+
+    const openEntity = (zone.ha_open_entity_id ?? "").trim()
+    if (openEntity) {
+        return openEntity
+    }
+
+    const closeEntity = (zone.ha_close_entity_id ?? "").trim()
+    if (closeEntity) {
+        return closeEntity
+    }
+
+    return `Zone ${index + 1}`
+}
+
 function clamp01(value: number): number {
     return Math.max(0, Math.min(1, value))
 }
@@ -102,7 +121,9 @@ export function ZoneEditor({ imageSrc, zones, maxZones, onChangeZones }: ZoneEdi
         const rect = normalizeRect(draftRect)
         const nextZone: DetectionZone = {
             id: Date.now(),
-            name: `Zone ${zones.length + 1}`,
+            name: "",
+            ha_open_entity_id: "",
+            ha_close_entity_id: "",
             x_min: rect.x_min,
             y_min: rect.y_min,
             x_max: rect.x_max,
@@ -126,7 +147,6 @@ export function ZoneEditor({ imageSrc, zones, maxZones, onChangeZones }: ZoneEdi
         const updated = zones.filter((_, zoneIndex) => zoneIndex !== index).map((zone, zoneIndex) => ({
             ...zone,
             sort_order: zoneIndex,
-            name: zone.name || `Zone ${zoneIndex + 1}`,
         }))
         onChangeZones(updated)
     }
@@ -184,7 +204,7 @@ export function ZoneEditor({ imageSrc, zones, maxZones, onChangeZones }: ZoneEdi
                                     style={{ left, top, width, height }}
                                 >
                                     <span className="absolute -top-6 left-0 rounded bg-black/70 px-2 py-0.5 text-[10px] text-zinc-200">
-                                        {zone.name}
+                                        {zoneLabel(zone, index)}
                                     </span>
                                 </div>
                             )
@@ -213,9 +233,10 @@ export function ZoneEditor({ imageSrc, zones, maxZones, onChangeZones }: ZoneEdi
                 {zones.map((zone, index) => (
                     <div key={`${zone.id}-${index}`} className="grid grid-cols-[1fr_auto_auto] items-center gap-2 rounded border border-zinc-800 p-2">
                         <input
-                            value={zone.name}
+                            value={zone.name ?? ""}
                             onChange={(event) => updateZone(index, (prev) => ({ ...prev, name: event.target.value }))}
                             className="rounded border border-zinc-700 bg-zinc-950 px-2 py-1 text-xs text-zinc-200 outline-none"
+                            placeholder="Optional label"
                         />
                         <button
                             type="button"

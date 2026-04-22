@@ -21,6 +21,25 @@ type DashboardSidebarProps = {
     syncAgeSec: number | null
 }
 
+function zoneLabel(zone: DetectionZone, index: number): string {
+    const explicitName = (zone.name ?? "").trim()
+    if (explicitName) {
+        return explicitName
+    }
+
+    const openEntity = (zone.ha_open_entity_id ?? "").trim()
+    if (openEntity) {
+        return openEntity
+    }
+
+    const closeEntity = (zone.ha_close_entity_id ?? "").trim()
+    if (closeEntity) {
+        return closeEntity
+    }
+
+    return `Zone ${index + 1}`
+}
+
 function formatTime(value: string | null | undefined) {
     if (!value) {
         return "-"
@@ -165,7 +184,7 @@ export function DashboardSidebar({
                                     {zone.is_enabled ? "✓" : ""}
                                 </button>
 
-                                <span className="flex-1 truncate text-xs font-medium text-zinc-300">{zone.name}</span>
+                                <span className="flex-1 truncate text-xs font-medium text-zinc-300">{zoneLabel(zone, index)}</span>
 
                                 <button
                                     type="button"

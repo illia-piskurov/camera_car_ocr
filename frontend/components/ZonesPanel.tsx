@@ -17,6 +17,24 @@ type ZonesPanelProps = {
     onRemoveZone: (index: number) => void
 }
 
+function inferZoneLabel(zone: DetectionZone, fallbackIndex: number): string {
+    const explicit = (zone.name ?? "").trim()
+    if (explicit) {
+        return explicit
+    }
+
+    const openEntity = (zone.ha_open_entity_id ?? "").trim()
+    const closeEntity = (zone.ha_close_entity_id ?? "").trim()
+    if (openEntity) {
+        return openEntity
+    }
+    if (closeEntity) {
+        return closeEntity
+    }
+
+    return `Zone ${fallbackIndex + 1}`
+}
+
 export function ZonesPanel({
     zones,
     maxZones,
@@ -52,7 +70,9 @@ export function ZonesPanel({
                         const maxId = zones.length > 0 ? Math.max(...zones.map(z => z.id)) : 0
                         const newZone: DetectionZone = {
                             id: maxId + 1,
-                            name: `Zone ${zones.length + 1}`,
+                            name: "",
+                            ha_open_entity_id: "",
+                            ha_close_entity_id: "",
                             x_min: 0.1,
                             y_min: 0.1,
                             x_max: 0.4,
@@ -71,43 +91,117 @@ export function ZonesPanel({
             {/* Zones List */}
             {zones.length > 0 ? (
                 <div className="space-y-2 border-t border-zinc-800 pt-3">
-                    {visibleZones.map((zone, index) => (
-                        <div
-                            key={`${zone.id}-${index}`}
-                            className="grid grid-cols-[1fr_auto_auto] items-center gap-2 rounded border border-zinc-800 bg-zinc-900/50 p-2"
-                        >
-                            <input
-                                value={zone.name}
-                                onChange={(event) =>
-                                    onUpdateZone(index, (prev) => ({ ...prev, name: event.target.value }))
-                                }
-                                className="rounded border border-zinc-700 bg-zinc-950 px-2 py-1 text-xs text-zinc-200 outline-none focus:border-cyan-500"
-                                placeholder="Zone name"
-                            />
-                            <button
-                                type="button"
-                                className={`rounded px-2 py-1 text-xs font-medium transition ${zone.is_enabled
-                                    ? "bg-emerald-500/20 text-emerald-200"
-                                    : "bg-zinc-700 text-zinc-400"
-                                    }`}
-                                onClick={() =>
-                                    onUpdateZone(index, (prev) => ({ ...prev, is_enabled: !prev.is_enabled }))
-                                }
+                    {visibleZones.map((zone, index) => {
+                        const sourceIndex = zones.findIndex((item) => item.id === zone.id)
+                        const zoneIndex = sourceIndex >= 0 ? sourceIndex : index
+                        return (
+                            <div
+                                key={`${zone.id}-${index}`}
+                                className="space-y-2 rounded border border-zinc-800 bg-zinc-900/50 p-2"
                             >
-                                {zone.is_enabled ? "ON" : "OFF"}
-                            </button>
-                            <button
-                                type="button"
-                                className="rounded bg-red-500/20 px-2 py-1 text-xs text-red-200 hover:bg-red-500/30"
-                                onClick={() => onRemoveZone(index)}
-                            >
-                                Delete
-                            </button>
-                        </div>
-                    ))}
+                                <div className="grid grid-cols-[1fr_auto_auto] items-center gap-2">
+                                    <p className="truncate text-xs text-zinc-300" title={inferZoneLabel(zone, zoneIndex)}>
+                                        {inferZoneLabel(zone, zoneIndex)}
+                                    </p>
+                                    <button
+                                        type="button"
+                                        className={`rounded px-2 py-1 text-xs font-medium transition ${zone.is_enabled
+                                            ? "bg-emerald-500/20 text-emerald-200"
+                                            : "bg-zinc-700 text-zinc-400"
+                                            }`}
+                                        onClick={() =>
+                                            onUpdateZone(zoneIndex, (prev) => ({ ...prev, is_enabled: !prev.is_enabled }))
+                                        }
+                                    >
+                                        {zone.is_enabled ? "ON" : "OFF"}
+                                    </button>
+                                    <button
+                                        type="button"
+                                        className="rounded bg-red-500/20 px-2 py-1 text-xs text-red-200 hover:bg-red-500/30"
+                                        onClick={() => onRemoveZone(zoneIndex)}
+                                    >
+                                        Delete
+                                    </button>
+                                </div>
+
+                                <div className="grid gap-2">
+                                    <label className="space-y-1 text-[11px] text-zinc-500">
+                                        <span>Open Entity ID</span>
+                                        <input
+                                            value={zone.ha_open_entity_id ?? ""}
+                                            onChange={(event) =>
+                                                onUpdateZone(zoneIndex, (prev) => {
+                                                    const nextOpen = event.target.value
+                                                    const hasName = Boolean((prev.name ?? "").trim())
+                                                    return {
+                                                        ...prev,
+                                                        ha_open_entity_id: nextOpen,
+                                                        name: hasName ? prev.name : nextOpen || prev.ha_close_entity_id || prev.name,
+                                                    }
+                                                })
+                                            }
+                                            className="rounded border border-zinc-700 bg-zinc-950 px-2 py-1 text-xs text-zinc-200 outline-none focus:border-cyan-500"
+                                            placeholder="input_button.gate_open"
+                                        />
+                                    </label>
+
+                                    <label className="space-y-1 text-[11px] text-zinc-500">
+                                        <span>Close Entity ID</span>
+                                        <input
+                                            value={zone.ha_close_entity_id ?? ""}
+                                            onChange={(event) =>
+                                                onUpdateZone(zoneIndex, (prev) => {
+                                                    const nextClose = event.target.value
+                                                    const hasName = Boolean((prev.name ?? "").trim())
+                                                    return {
+                                                        ...prev,
+                                                        ha_close_entity_id: nextClose,
+                                                        name: hasName ? prev.name : prev.ha_open_entity_id || nextClose || prev.name,
+                                                    }
+                                                })
+                                            }
+                                            className="rounded border border-zinc-700 bg-zinc-950 px-2 py-1 text-xs text-zinc-200 outline-none focus:border-cyan-500"
+                                            placeholder="input_button.gate_close"
+                                        />
+                                    </label>
+
+                                    <label className="space-y-1 text-[11px] text-zinc-500">
+                                        <span>Label (optional)</span>
+                                        <input
+                                            value={zone.name ?? ""}
+                                            onChange={(event) =>
+                                                onUpdateZone(zoneIndex, (prev) => ({ ...prev, name: event.target.value }))
+                                            }
+                                            onBlur={() =>
+                                                onUpdateZone(zoneIndex, (prev) => {
+                                                    const currentName = (prev.name ?? "").trim()
+                                                    if (currentName) {
+                                                        return prev
+                                                    }
+
+                                                    const openEntity = (prev.ha_open_entity_id ?? "").trim()
+                                                    const closeEntity = (prev.ha_close_entity_id ?? "").trim()
+                                                    return {
+                                                        ...prev,
+                                                        name: openEntity || closeEntity || "",
+                                                    }
+                                                })
+                                            }
+                                            className="rounded border border-zinc-700 bg-zinc-950 px-2 py-1 text-xs text-zinc-200 outline-none focus:border-cyan-500"
+                                            placeholder="Optional display label"
+                                        />
+                                    </label>
+
+                                    <p className="text-[11px] text-zinc-500">
+                                        If label is empty, it is auto-filled from entity IDs. Duplicate entity IDs across zones are allowed.
+                                    </p>
+                                </div>
+                            </div>
+                        )
+                    })}
                 </div>
             ) : (
-                <p className="text-xs text-zinc-500">No zones configured</p>
+                <p className="text-xs text-zinc-500">No zones configured. Add a zone and set entity IDs.</p>
             )}
 
             {/* Action Buttons */}

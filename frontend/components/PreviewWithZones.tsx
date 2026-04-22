@@ -9,6 +9,25 @@ type PreviewWithZonesProps = {
     onChangeZones: (zones: DetectionZone[]) => void
 }
 
+function zoneLabel(zone: DetectionZone, index: number): string {
+    const explicitName = (zone.name ?? "").trim()
+    if (explicitName) {
+        return explicitName
+    }
+
+    const openEntity = (zone.ha_open_entity_id ?? "").trim()
+    if (openEntity) {
+        return openEntity
+    }
+
+    const closeEntity = (zone.ha_close_entity_id ?? "").trim()
+    if (closeEntity) {
+        return closeEntity
+    }
+
+    return `Zone ${index + 1}`
+}
+
 type ResizingZone = {
     zoneIndex: number
     corner: "tl" | "tr" | "bl" | "br"
@@ -117,7 +136,7 @@ export function PreviewWithZones({
                                 >
                                     {/* Zone label */}
                                     <span className="absolute -top-6 left-0 rounded bg-black/70 px-2 py-0.5 text-[10px] text-zinc-200">
-                                        {zone.name}
+                                        {zoneLabel(zone, index)}
                                     </span>
 
                                     {/* Top-Left Corner Handle */}
