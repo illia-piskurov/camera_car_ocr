@@ -29,17 +29,26 @@ def test_run_uses_same_frame_id_for_two_shot_cycle(monkeypatch) -> None:
             return
 
         @staticmethod
-        def list_cameras(is_active=None):
-            _ = is_active
-            return []  # Empty means legacy mode will be used
+        def get_camera(camera_id: int):
+            return {
+                "id": camera_id,
+                "name": "Camera 1",
+                "snapshot_url": "http://test.local/snapshot",
+                "is_active": True,
+            }
+
+        @staticmethod
+        def get_camera_credentials(camera_id: int, encryption_key: str):
+            _ = (camera_id, encryption_key)
+            return ("admin", "password", "http_basic")
 
         @staticmethod
         def is_sync_due(_hours: float) -> bool:
             return False
 
         @staticmethod
-        def get_zones(include_disabled: bool = False):
-            _ = include_disabled
+        def get_zones(include_disabled: bool = False, camera_id: int | None = None):
+            _ = (include_disabled, camera_id)
             return [
                 {
                     "id": 1,
@@ -65,13 +74,8 @@ def test_run_uses_same_frame_id_for_two_shot_cycle(monkeypatch) -> None:
 
     cfg = SimpleNamespace(
         db_path=":memory:",
-        camera_snapshot_url="http://test.local/snapshot",
-        camera_username="admin",
-        camera_password="password",
-        camera_auth_mode="http_basic",
         request_timeout_sec=5.0,
         request_retries=3,
-        onec_sync_interval_hours=24.0,
         dry_run_open=True,
         barrier_action_mode="mock",
         barrier_ha_base_url="http://ha.local",
@@ -139,9 +143,6 @@ def test_run_uses_same_frame_id_for_two_shot_cycle(monkeypatch) -> None:
     monkeypatch.setattr(orchestrator, "_refresh_zone_hold", lambda **kwargs: None)
     monkeypatch.setattr(orchestrator, "_snapshot_stage", lambda **kwargs: None)
     monkeypatch.setattr(orchestrator, "_preview_stage", lambda **kwargs: None)
-    monkeypatch.setattr(orchestrator, "_sync_whitelist", lambda **kwargs: None)
-    monkeypatch.setattr(orchestrator, "create_whitelist_provider", lambda cfg: SimpleNamespace(source="stub"))
-
     sleep_calls = {"count": 0}
 
     def fake_sleep(_seconds: float) -> None:
@@ -152,7 +153,7 @@ def test_run_uses_same_frame_id_for_two_shot_cycle(monkeypatch) -> None:
 
     monkeypatch.setattr(orchestrator.time, "sleep", fake_sleep)
 
-    orchestrator.run(settings=cfg)
+    orchestrator.run_camera_worker(1, settings=cfg)
 
     assert len(detect_calls) == 2
     assert detect_calls[0] == detect_calls[1]

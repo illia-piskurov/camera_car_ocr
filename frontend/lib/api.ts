@@ -1,7 +1,6 @@
 import type {
     Camera,
     CameraCreatePayload,
-    DashboardData,
     ForceSyncResult,
     PreviewData,
     SaveZonesResponse,
@@ -62,21 +61,7 @@ export async function createCamera(payload: CameraCreatePayload): Promise<{ stat
     return (await response.json()) as { status: string; camera: Camera }
 }
 
-export async function fetchDashboard(signal?: AbortSignal): Promise<DashboardData> {
-    const response = await fetch(`${API_BASE}/api/dashboard`, {
-        method: "GET",
-        cache: "no-store",
-        signal,
-    })
-
-    if (!response.ok) {
-        throw new Error(`Dashboard request failed: ${response.status}`)
-    }
-
-    return (await response.json()) as DashboardData
-}
-
-export async function fetchCameraDashboard(cameraId: number, signal?: AbortSignal): Promise<DashboardData> {
+export async function fetchCameraDashboard(cameraId: number, signal?: AbortSignal): Promise<import("@/lib/types").DashboardData> {
     const response = await fetch(`${API_BASE}/api/cameras/${cameraId}/dashboard`, {
         method: "GET",
         cache: "no-store",
@@ -87,7 +72,7 @@ export async function fetchCameraDashboard(cameraId: number, signal?: AbortSigna
         throw new Error(`Camera dashboard request failed: ${response.status}`)
     }
 
-    return (await response.json()) as DashboardData
+    return (await response.json()) as import("@/lib/types").DashboardData
 }
 
 export async function forceSync(): Promise<ForceSyncResult> {
@@ -101,20 +86,6 @@ export async function forceSync(): Promise<ForceSyncResult> {
     }
 
     return (await response.json()) as ForceSyncResult
-}
-
-export async function fetchPreview(signal?: AbortSignal): Promise<PreviewData> {
-    const response = await fetch(`${API_BASE}/api/preview`, {
-        method: "GET",
-        cache: "no-store",
-        signal,
-    })
-
-    if (!response.ok) {
-        throw new Error(`Preview request failed: ${response.status}`)
-    }
-
-    return (await response.json()) as PreviewData
 }
 
 export async function fetchCameraPreview(cameraId: number, signal?: AbortSignal): Promise<PreviewData> {

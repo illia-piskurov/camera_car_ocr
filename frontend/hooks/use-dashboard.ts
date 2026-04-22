@@ -3,9 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 
 import {
-    fetchDashboard,
     fetchCameraDashboard,
-    fetchPreview,
     fetchCameraPreview,
     forceSync,
     listCameras,
@@ -46,17 +44,26 @@ export function useDashboard(selectedCameraId?: number | null) {
 
         const controller = new AbortController()
         try {
-            const dashboardPromise = selectedCameraId
-                ? fetchCameraDashboard(selectedCameraId, controller.signal)
-                : fetchDashboard(controller.signal)
-            const previewPromise = selectedCameraId
-                ? fetchCameraPreview(selectedCameraId, controller.signal).catch(() => null)
-                : fetchPreview(controller.signal).catch(() => null)
+            const cameras = await listCameras(controller.signal)
 
-            const [data, preview, cameras] = await Promise.all([
-                dashboardPromise,
-                previewPromise,
-                listCameras(controller.signal),
+            if (selectedCameraId == null) {
+                setState((prev) => ({
+                    ...prev,
+                    data: null,
+                    preview: null,
+                    cameras,
+                    loading: false,
+                    refreshing: false,
+                    error: null,
+                    lastUpdatedAt: new Date(),
+                    isStale: false,
+                }))
+                return
+            }
+
+            const [data, preview] = await Promise.all([
+                fetchCameraDashboard(selectedCameraId, controller.signal),
+                fetchCameraPreview(selectedCameraId, controller.signal).catch(() => null),
             ])
 
             setState((prev) => ({
@@ -78,7 +85,7 @@ export function useDashboard(selectedCameraId?: number | null) {
                 error: error instanceof Error ? error.message : "Не удалось загрузить данные",
             }))
         }
-    }, [])
+    }, [selectedCameraId])
 
     const runForceSync = useCallback(async () => {
         await forceSync()

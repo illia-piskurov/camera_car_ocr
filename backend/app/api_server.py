@@ -59,12 +59,12 @@ class CameraInput(BaseModel):
     sort_order: int | None = None
 
 
-def _read_preview_meta() -> dict[str, object]:
-    if not os.path.exists(cfg.preview_meta_path):
+def _read_preview_meta(meta_path: str) -> dict[str, object]:
+    if not os.path.exists(meta_path):
         return {}
 
     try:
-        with open(cfg.preview_meta_path, "r", encoding="utf-8") as meta_file:
+        with open(meta_path, "r", encoding="utf-8") as meta_file:
             loaded = json.load(meta_file)
         if isinstance(loaded, dict):
             return loaded
@@ -134,64 +134,6 @@ def create_camera(payload: CameraInput) -> dict[str, object]:
     return {"status": "ok", "camera": camera}
 
 
-@app.get("/api/dashboard")
-def dashboard() -> dict[str, object]:
-    now = utc_now()
-    since = now - timedelta(hours=24)
-
-    counts = db.get_decision_counts_since(since)
-    whitelist = db.get_whitelist_counts()
-    last_sync = db.get_last_sync_at()
-    recent_events = db.get_recent_events(limit=20)
-
-    avg_confidence = 0.0
-    confidence_values = [
-        float(item.get("vote_avg_confidence") or 0.0)
-        for item in recent_events
-        if item.get("decision") in {"open", "deny"}
-    ]
-    if confidence_values:
-        avg_confidence = sum(confidence_values) / len(confidence_values)
-
-    sync_age_seconds: int | None = None
-    if last_sync is not None:
-        sync_age_seconds = int((now - last_sync).total_seconds())
-
-    return {
-        "generated_at": now.isoformat(),
-        "mode": {
-            "dry_run_open": cfg.dry_run_open,
-            "barrier_action_mode": cfg.barrier_action_mode,
-            "barrier_close_delay_sec": cfg.barrier_close_delay_sec,
-            "barrier_live_configured": cfg.is_barrier_live_configured(),
-            "zone1_barrier_configured": cfg.has_zone_barrier_entities(1),
-            "zone2_barrier_configured": cfg.has_zone_barrier_entities(2),
-            "zone1_close_delay_sec": cfg.get_zone_close_delay_sec(1),
-            "zone2_close_delay_sec": cfg.get_zone_close_delay_sec(2),
-            "ocr_open_threshold": cfg.ocr_open_threshold,
-            "ocr_extend_threshold": cfg.ocr_extend_threshold,
-            "two_shot_gap_ms": cfg.two_shot_gap_ms,
-            "two_shot_max_pairs": cfg.two_shot_max_pairs,
-            "decision_model_version": "two-shot-v1",
-            "legacy_config_deprecated": False,
-        },
-        "sync": {
-            "source": provider.source,
-            "last_sync_at": last_sync.isoformat() if last_sync else None,
-            "sync_age_seconds": sync_age_seconds,
-            "is_due": db.is_sync_due(cfg.onec_sync_interval_hours),
-        },
-        "whitelist": whitelist,
-        "kpi_24h": {
-            "open": counts.get("open", 0),
-            "deny": counts.get("deny", 0),
-            "observed": counts.get("observed", 0),
-            "avg_confidence": avg_confidence,
-        },
-        "recent_events": recent_events,
-    }
-
-
 @app.get("/api/zones")
 def get_zones() -> dict[str, object]:
     return {
@@ -242,37 +184,6 @@ def force_sync() -> dict[str, object]:
         "synced_count": synced,
         "last_sync_at": last_sync.isoformat() if last_sync else None,
     }
-
-
-@app.get("/api/preview")
-def preview_meta() -> dict[str, object]:
-    meta = _read_preview_meta()
-    available = os.path.exists(cfg.preview_image_path)
-    captured_at = meta.get("captured_at")
-
-    return {
-        "available": available,
-        "captured_at": captured_at if isinstance(captured_at, str) else None,
-        "has_detections": bool(meta.get("has_detections", False)),
-        "last_plate": meta.get("last_plate") if isinstance(meta.get("last_plate"), str) else None,
-        "last_decision": meta.get("last_decision") if isinstance(meta.get("last_decision"), str) else None,
-        "zones": db.get_zones(include_disabled=True),
-        "max_zones": cfg.detection_zones_max,
-        "image_url": "/api/preview/image" if available else None,
-        "version": captured_at if isinstance(captured_at, str) else None,
-    }
-
-
-@app.get("/api/preview/image")
-def preview_image() -> FileResponse:
-    if not os.path.exists(cfg.preview_image_path):
-        raise HTTPException(status_code=404, detail="Preview image not available yet")
-
-    return FileResponse(
-        cfg.preview_image_path,
-        media_type="image/jpeg",
-        headers={"Cache-Control": "no-store, no-cache, must-revalidate, max-age=0"},
-    )
 
 
 @app.get("/api/events/{event_id}/image")
@@ -409,8 +320,8 @@ def camera_preview_meta(camera_id: int) -> dict[str, object]:
     if camera is None:
         raise HTTPException(status_code=404, detail=f"Camera {camera_id} not found")
 
-    meta = _read_preview_meta()
-    available = os.path.exists(cfg.preview_image_path)
+    meta = _read_preview_meta(cfg.get_preview_meta_path(camera_id))
+    available = os.path.exists(cfg.get_preview_image_path(camera_id))
     captured_at = meta.get("captured_at")
 
     return {
@@ -434,11 +345,12 @@ def camera_preview_image(camera_id: int) -> FileResponse:
     if camera is None:
         raise HTTPException(status_code=404, detail=f"Camera {camera_id} not found")
 
-    if not os.path.exists(cfg.preview_image_path):
+    image_path = cfg.get_preview_image_path(camera_id)
+    if not os.path.exists(image_path):
         raise HTTPException(status_code=404, detail="Preview image not available yet")
 
     return FileResponse(
-        cfg.preview_image_path,
+        image_path,
         media_type="image/jpeg",
         headers={"Cache-Control": "no-store, no-cache, must-revalidate, max-age=0"},
     )

@@ -33,7 +33,14 @@ def test_dashboard_mode_payload_exposes_two_shot_only(monkeypatch) -> None:
 
     class DbStub:
         @staticmethod
-        def get_decision_counts_since(_since):
+        def get_camera(camera_id: int):
+            if camera_id == 7:
+                return {"id": 7, "name": "Gate Camera"}
+            return None
+
+        @staticmethod
+        def get_decision_counts_since(_since, camera_id: int | None = None):
+            assert camera_id == 7
             return {"open": 3, "deny": 1, "observed": 7}
 
         @staticmethod
@@ -45,8 +52,9 @@ def test_dashboard_mode_payload_exposes_two_shot_only(monkeypatch) -> None:
             return fixed_now - timedelta(hours=1)
 
         @staticmethod
-        def get_recent_events(limit: int = 20):
+        def get_recent_events(limit: int = 20, camera_id: int | None = None):
             assert limit == 20
+            assert camera_id == 7
             return []
 
         @staticmethod
@@ -58,7 +66,7 @@ def test_dashboard_mode_payload_exposes_two_shot_only(monkeypatch) -> None:
     monkeypatch.setattr(api_server, "db", DbStub())
     monkeypatch.setattr(api_server, "provider", SimpleNamespace(source="stub"))
 
-    payload = api_server.dashboard()
+    payload = api_server.camera_dashboard(7)
     mode = payload["mode"]
 
     expected_keys = {

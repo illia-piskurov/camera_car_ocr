@@ -7,10 +7,12 @@ import type { Camera, CameraCreatePayload } from "@/lib/types"
 
 interface OnboardingPanelProps {
     onCameraAdded: (camera: Camera) => void
+    onCancel?: () => void
+    isFirstCameraFlow?: boolean
 }
 
-export function OnboardingPanel({ onCameraAdded }: OnboardingPanelProps) {
-    const [step, setStep] = useState<"welcome" | "form">("welcome")
+export function OnboardingPanel({ onCameraAdded, onCancel, isFirstCameraFlow = true }: OnboardingPanelProps) {
+    const [step, setStep] = useState<"welcome" | "form">(isFirstCameraFlow ? "welcome" : "form")
     const [loading, setLoading] = useState(false)
     const [error, setError] = useState<string | null>(null)
     const [validating, setValidating] = useState(false)
@@ -78,6 +80,15 @@ export function OnboardingPanel({ onCameraAdded }: OnboardingPanelProps) {
                         >
                             Add First Camera
                         </Button>
+                        {onCancel && (
+                            <Button
+                                onClick={onCancel}
+                                variant="outline"
+                                className="mt-3 w-full"
+                            >
+                                Back to Dashboard
+                            </Button>
+                        )}
                     </div>
                 </div>
             </div>
@@ -90,6 +101,11 @@ export function OnboardingPanel({ onCameraAdded }: OnboardingPanelProps) {
                 <div className="mb-8">
                     <button
                         onClick={() => {
+                            if (!isFirstCameraFlow && onCancel) {
+                                onCancel()
+                                return
+                            }
+
                             setStep("welcome")
                             setError(null)
                             setFormData({
@@ -102,7 +118,7 @@ export function OnboardingPanel({ onCameraAdded }: OnboardingPanelProps) {
                         }}
                         className="text-blue-400 hover:text-blue-300 text-sm font-medium"
                     >
-                        ← Back
+                        {isFirstCameraFlow ? "← Back" : "← Back to Dashboard"}
                     </button>
                 </div>
 
@@ -177,8 +193,12 @@ export function OnboardingPanel({ onCameraAdded }: OnboardingPanelProps) {
                     <div className="flex gap-3 mt-6">
                         <Button
                             onClick={() => {
-                                setStep("welcome")
-                                setError(null)
+                                if (onCancel) {
+                                    onCancel()
+                                } else {
+                                    setStep("welcome")
+                                    setError(null)
+                                }
                             }}
                             variant="outline"
                             className="flex-1"

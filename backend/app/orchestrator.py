@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import logging
+import subprocess
 import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
+import sys
 from uuid import uuid4
 
 import cv2
@@ -24,6 +26,8 @@ from .zones import crop_zone, draw_zones, paste_zone_image
 from . import stages
 
 LOG = logging.getLogger(__name__)
+
+_WORKER_SCRIPT = ["-m", "app.camera_worker"]
 
 
 def _as_zone_id(value: object) -> int | None:
@@ -71,13 +75,17 @@ def _process_frame(
     *,
     frame,
     prev_frame,
+    camera_id: int | None = None,
     db: Database,
     cfg: Settings,
     state: PipelineState,
 ) -> FrameStageContext | None:
     now = datetime.now(timezone.utc)
     frame_id = uuid4().hex
-    active_zones = db.get_zones(include_disabled=False)[: max(0, cfg.detection_zones_max)]
+    if camera_id is None:
+        active_zones = db.get_zones(include_disabled=False)[: max(0, cfg.detection_zones_max)]
+    else:
+        active_zones = db.get_zones(include_disabled=False, camera_id=camera_id)[: max(0, cfg.detection_zones_max)]
 
     if not active_zones:
         now_monotonic = time.monotonic()
@@ -86,7 +94,14 @@ def _process_frame(
                 "No active zones configured. ALPR and barrier actions are paused until zones are defined"
             )
             state.last_no_zone_warning_ts = now_monotonic
-        return None
+        # Keep preview alive even without zones so the operator can validate camera feed.
+        return FrameStageContext(
+            now=now,
+            frame_id=frame_id,
+            active_zones=[],
+            active_zones_by_id={},
+            skip_alpr_this_frame=True,
+        )
 
     skip_alpr_this_frame = False
     if cfg.motion_detection_enabled and prev_frame is not None:
@@ -321,61 +336,6 @@ def _refresh_zone_hold(
         )
 
 
-def _initialize_pipeline(
-    cfg: Settings,
-) -> tuple[SnapshotCameraClient, AlprService, BarrierController, Database, WhitelistProvider]:
-    """Initialize all pipeline components.
-
-    Args:
-        cfg: Settings configuration.
-
-    Returns:
-        Tuple of (camera, alpr, barrier, db, provider) initialized instances.
-    """
-    db = Database(cfg.db_path)
-    db.init()
-
-    provider = create_whitelist_provider(cfg)
-
-    camera = SnapshotCameraClient(
-        url=cfg.camera_snapshot_url,
-        timeout_sec=cfg.request_timeout_sec,
-        retries=cfg.request_retries,
-        username=cfg.camera_username,
-        password=cfg.camera_password,
-        auth_mode=cfg.camera_auth_mode,
-    )
-
-    try:
-        alpr = AlprService(detector_model=cfg.detector_model, ocr_model=cfg.ocr_model)
-    except (ValueError, RuntimeError) as exc:
-        LOG.error("Failed to initialize ALPR models: %s", exc)
-        raise
-
-    zones = db.get_zones(include_disabled=True)
-    barrier = BarrierController(
-        dry_run=cfg.dry_run_open,
-        action_mode=cfg.barrier_action_mode,
-        ha_base_url=cfg.barrier_ha_base_url,
-        ha_token=cfg.barrier_ha_token,
-        zone_open_entity_ids={
-            int(zone["id"]): str(zone.get("ha_open_entity_id") or "")
-            for zone in zones
-            if zone.get("ha_open_entity_id")
-        },
-        zone_close_entity_ids={
-            int(zone["id"]): str(zone.get("ha_close_entity_id") or "")
-            for zone in zones
-            if zone.get("ha_close_entity_id")
-        },
-        timeout_sec=cfg.barrier_request_timeout_sec,
-        retries=cfg.barrier_request_retries,
-        verify_tls=cfg.barrier_verify_tls,
-    )
-
-    return camera, alpr, barrier, db, provider
-
-
 def _snapshot_stage(
     *,
     cfg: Settings,
@@ -449,6 +409,7 @@ def _snapshot_stage(
 def _preview_stage(
     *,
     cfg: Settings,
+    camera_id: int | None,
     frame: np.ndarray,
     detections: list[PlateDetection],
     detection_result: DetectionStageResult,
@@ -506,8 +467,8 @@ def _preview_stage(
     try:
         write_preview_artifacts(
             image=annotated,
-            image_path=cfg.preview_image_path,
-            meta_path=cfg.preview_meta_path,
+            image_path=cfg.get_preview_image_path(camera_id),
+            meta_path=cfg.get_preview_meta_path(camera_id),
             captured_at=stage.now,
             has_detections=bool(detections),
             last_plate=preview_plates[0] if preview_plates else None,
@@ -553,6 +514,7 @@ def _poll_single_camera(
     stage = _process_frame(
         frame=frame,
         prev_frame=state.prev_frame,
+        camera_id=camera_id,
         db=db,
         cfg=cfg,
         state=state,
@@ -639,6 +601,7 @@ def _poll_single_camera(
 
     _preview_stage(
         cfg=cfg,
+        camera_id=camera_id,
         frame=frame,
         detections=detections,
         detection_result=detection_result,
@@ -651,36 +614,36 @@ def _poll_single_camera(
     state.update_frame(frame)
 
 
-def run(settings: Settings | None = None) -> None:
-    """Run the main ALPR pipeline loop.
-
-    Args:
-        settings: Optional Settings instance; loads from env if not provided.
-
-    Supports multi-camera operation: loads active cameras from database and polls
-    them sequentially. Falls back to legacy single-camera mode if no cameras are
-    configured in the database.
-    """
+def run_camera_worker(camera_id: int, settings: Settings | None = None) -> None:
+    """Run the pipeline for one camera."""
     cfg = settings or Settings.from_env()
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s | %(levelname)s | %(name)s | %(message)s",
     )
 
-    # Initialize database and core components
     db = Database(cfg.db_path)
     db.init()
 
-    provider = create_whitelist_provider(cfg)
+    camera_record = db.get_camera(camera_id)
+    if camera_record is None or not camera_record.get("is_active", False):
+        LOG.warning("Camera %s is missing or inactive; worker will exit", camera_id)
+        return
 
-    # Initialize ALPR and barrier
+    encryption_key = cfg.get_camera_credentials_encryption_key()
+    creds = db.get_camera_credentials(camera_id, encryption_key)
+    if creds is None:
+        LOG.error("Failed to retrieve credentials for camera %s (id=%s)", camera_record.get("name"), camera_id)
+        return
+    username, password, auth_mode = creds
+
     try:
         alpr = AlprService(detector_model=cfg.detector_model, ocr_model=cfg.ocr_model)
     except (ValueError, RuntimeError) as exc:
         LOG.error("Failed to initialize ALPR models: %s", exc)
         raise
 
-    zones = db.get_zones(include_disabled=True)
+    zones = db.get_zones(include_disabled=True, camera_id=camera_id)
     barrier = BarrierController(
         dry_run=cfg.dry_run_open,
         action_mode=cfg.barrier_action_mode,
@@ -701,124 +664,126 @@ def run(settings: Settings | None = None) -> None:
         verify_tls=cfg.barrier_verify_tls,
     )
 
-    # Initial whitelist sync
-    if db.is_sync_due(cfg.onec_sync_interval_hours):
-        try:
-            _sync_whitelist(db, provider, cfg)
-        except (IOError, TimeoutError) as exc:
-            LOG.warning("Initial whitelist sync failed: %s", exc)
-
-    # Load cameras from database; fall back to legacy single-camera mode if none exist
-    active_cameras = db.list_cameras(is_active=True)
-
-    if not active_cameras:
-        LOG.warning(
-            "No active cameras in database. Falling back to legacy single-camera mode from settings."
-        )
-        active_cameras = [
-            {
-                "id": None,
-                "name": "legacy-single-camera",
-                "snapshot_url": cfg.camera_snapshot_url,
-                "auth_mode": cfg.camera_auth_mode,
-                "is_active": True,
-                "sort_order": 0,
-            }
-        ]
-
-    # Create camera client for each active camera
-    camera_clients: dict[int | None, SnapshotCameraClient] = {}
-    encryption_key = cfg.get_camera_credentials_encryption_key()
-
-    for camera_record in active_cameras:
-        try:
-            camera_id = camera_record.get("id")
-
-            # Get credentials: DB-backed cameras use decryption, legacy mode uses settings
-            if camera_id is not None:
-                creds = db.get_camera_credentials(camera_id, encryption_key)
-                if creds is None:
-                    LOG.error("Failed to retrieve credentials for camera %s (id=%s)", 
-                              camera_record.get("name"), camera_id)
-                    continue
-                username, password, auth_mode = creds
-            else:
-                # Legacy single-camera mode
-                username = cfg.camera_username
-                password = cfg.camera_password
-                auth_mode = cfg.camera_auth_mode
-
-            camera_clients[camera_id] = SnapshotCameraClient(
-                url=camera_record.get("snapshot_url") or cfg.camera_snapshot_url,
-                timeout_sec=cfg.request_timeout_sec,
-                retries=cfg.request_retries,
-                username=username,
-                password=password,
-                auth_mode=auth_mode,
-            )
-        except Exception as exc:  # noqa: BLE001
-            LOG.error("Failed to initialize camera %s: %s", camera_record.get("name"), exc)
-            continue
-
-    if not camera_clients:
-        LOG.error("No cameras could be initialized. Exiting.")
-        return
-
-    LOG.info(
-        "Pipeline started with %d camera(s). dry_run=%s barrier_action_mode=%s whitelist_provider=%s",
-        len(camera_clients),
-        cfg.dry_run_open,
-        cfg.barrier_action_mode,
-        provider.source,
+    camera = SnapshotCameraClient(
+        url=str(camera_record.get("snapshot_url") or ""),
+        timeout_sec=cfg.request_timeout_sec,
+        retries=cfg.request_retries,
+        username=username,
+        password=password,
+        auth_mode=auth_mode,
     )
-
-    # Create pipeline state
     state = PipelineState.create_initial()
+
+    LOG.info("Camera worker started for camera %s (id=%s)", camera_record.get("name"), camera_id)
 
     try:
         while True:
-            # Periodic whitelist sync
+            current_camera = db.get_camera(camera_id)
+            if current_camera is None or not current_camera.get("is_active", False):
+                LOG.info("Camera %s became inactive; stopping worker", camera_id)
+                return
+
+            try:
+                _poll_single_camera(
+                    camera_record=current_camera,
+                    camera=camera,
+                    alpr=alpr,
+                    barrier=barrier,
+                    db=db,
+                    cfg=cfg,
+                    state=state,
+                )
+            except Exception as exc:  # noqa: BLE001
+                LOG.error("Error processing camera %s (id=%s): %s", current_camera.get("name"), camera_id, exc)
+
+            time.sleep(cfg.poll_interval_sec)
+    except KeyboardInterrupt:
+        LOG.info("Camera worker interrupted by user")
+    finally:
+        try:
+            camera.close()
+        except Exception as exc:  # noqa: BLE001
+            LOG.warning("Error closing camera client: %s", exc)
+
+
+def run(settings: Settings | None = None) -> None:
+    """Run the camera worker supervisor.
+
+    The supervisor owns whitelist sync and camera process lifecycle. It stays idle
+    when no cameras exist, and starts one subprocess per active camera when cameras
+    are present.
+    """
+    cfg = settings or Settings.from_env()
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s | %(levelname)s | %(name)s | %(message)s",
+    )
+
+    db = Database(cfg.db_path)
+    db.init()
+    provider = create_whitelist_provider(cfg)
+
+    processes: dict[int, subprocess.Popen] = {}
+    last_idle_log = 0.0
+
+    def stop_process(camera_id: int) -> None:
+        process = processes.pop(camera_id, None)
+        if process is None:
+            return
+        if process.poll() is None:
+            process.terminate()
+            try:
+                process.wait(timeout=10)
+            except subprocess.TimeoutExpired:
+                process.kill()
+
+    try:
+        while True:
             if db.is_sync_due(cfg.onec_sync_interval_hours):
                 try:
                     _sync_whitelist(db, provider, cfg)
                 except (IOError, TimeoutError) as exc:
                     LOG.warning("Scheduled whitelist sync failed: %s", exc)
 
-            # Poll each active camera sequentially
-            for camera_id, camera_client in camera_clients.items():
-                # Find camera record for this ID
-                camera_record = next(
-                    (c for c in active_cameras if c.get("id") == camera_id),
-                    {"id": camera_id, "name": "unknown"},
-                )
+            active_cameras = [camera for camera in db.list_cameras(is_active=True) if camera.get("id") is not None]
+            active_ids = {int(camera["id"]) for camera in active_cameras}
 
-                try:
-                    _poll_single_camera(
-                        camera_record=camera_record,
-                        camera=camera_client,
-                        alpr=alpr,
-                        barrier=barrier,
-                        db=db,
-                        cfg=cfg,
-                        state=state,
-                    )
-                except Exception as exc:  # noqa: BLE001
-                    LOG.error(
-                        "Error processing camera %s (id=%s): %s",
-                        camera_record.get("name"),
-                        camera_id,
-                        exc,
-                    )
+            for camera_id in list(processes):
+                if camera_id not in active_ids:
+                    LOG.info("Stopping camera worker for removed/inactive camera id=%s", camera_id)
+                    stop_process(camera_id)
+
+            for camera in active_cameras:
+                camera_id = int(camera["id"])
+                process = processes.get(camera_id)
+                if process is not None and process.poll() is None:
+                    continue
+
+                if process is not None:
+                    processes.pop(camera_id, None)
+
+                command = [sys.executable, *_WORKER_SCRIPT, "--camera-id", str(camera_id)]
+                LOG.info("Starting worker subprocess for camera id=%s", camera_id)
+                processes[camera_id] = subprocess.Popen(command)
+
+            if not active_ids:
+                now_ts = time.monotonic()
+                if now_ts - last_idle_log >= 30.0:
+                    LOG.info("No active cameras in database; supervisor is idle")
+                    last_idle_log = now_ts
+
+            for camera_id, process in list(processes.items()):
+                if process.poll() is None:
+                    continue
+                LOG.warning("Camera worker exited for camera id=%s with code=%s; restarting", camera_id, process.returncode)
+                processes.pop(camera_id, None)
 
             time.sleep(cfg.poll_interval_sec)
 
     except KeyboardInterrupt:
-        LOG.info("Pipeline interrupted by user")
+        LOG.info("Supervisor interrupted by user")
     finally:
-        for camera_client in camera_clients.values():
-            try:
-                camera_client.close()
-            except Exception as exc:  # noqa: BLE001
-                LOG.warning("Error closing camera client: %s", exc)
+        for camera_id in list(processes):
+            stop_process(camera_id)
 
 

@@ -23,10 +23,6 @@ def test_config():
     """Create test configuration."""
     return config_module.Settings(
         db_path=":memory:",
-        camera_snapshot_url="http://test.local/snapshot",
-        camera_username="admin",
-        camera_password="password",
-        camera_auth_mode="http_basic",
         detection_zones_max=2,
         barrier_close_delay_sec=3,
     )

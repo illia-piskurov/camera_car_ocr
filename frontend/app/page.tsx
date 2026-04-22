@@ -21,6 +21,7 @@ function formatTime(value: string | null | undefined) {
 
 export default function Page() {
   const [selectedCameraId, setSelectedCameraId] = useState<number | null>(null)
+  const [isAddingCamera, setIsAddingCamera] = useState(false)
   const { data, preview, previewImageSrc, cameras, loading, error, refreshing, isStale, syncAgeSec, refresh, runForceSync } =
     useDashboard(selectedCameraId)
   const [selectedEventId, setSelectedEventId] = useState<number | null>(null)
@@ -48,9 +49,25 @@ export default function Page() {
   const selectedImageSrc = selectedEventId !== null ? toEventImageSrc(selectedEventId) : null
   const maxZones = preview?.max_zones ?? 2
 
-  // Show onboarding if no cameras
-  if (!loading && cameras.length === 0) {
-    return <OnboardingPanel onCameraAdded={() => refresh()} />
+  // Show onboarding if no cameras or when user explicitly opens add camera flow.
+  if ((!loading && cameras.length === 0) || isAddingCamera) {
+    return (
+      <OnboardingPanel
+        onCameraAdded={(camera) => {
+          setIsAddingCamera(false)
+          setSelectedCameraId(camera.id)
+          void refresh()
+        }}
+        isFirstCameraFlow={cameras.length === 0}
+        onCancel={
+          cameras.length > 0
+            ? () => {
+              setIsAddingCamera(false)
+            }
+            : undefined
+        }
+      />
+    )
   }
 
   async function handleSaveZones() {
@@ -118,7 +135,7 @@ export default function Page() {
               </button>
             ))}
             <button
-              onClick={() => refresh()}
+              onClick={() => setIsAddingCamera(true)}
               className="ml-auto px-3 py-2 text-sm text-zinc-400 hover:text-zinc-200 transition-colors"
               title="Add camera"
             >
