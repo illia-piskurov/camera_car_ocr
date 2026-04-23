@@ -144,7 +144,7 @@ export default function Page() {
         )}
 
         {/* Row 2: Preview (left 2/3) + Zones Panel (right 1/3) */}
-        <section className="grid gap-4 grid-cols-[2fr_1fr]">
+        <section className="grid grid-cols-1 gap-4 lg:grid-cols-[2fr_1fr]">
           {/* Left: Preview */}
           <div className="ops-panel p-4">
             <PreviewWithZones

@@ -100,10 +100,10 @@ export function PreviewWithZones({
 
     return (
         <div className="space-y-3">
-            <p className="text-xs uppercase tracking-widest text-zinc-500">Live Preview</p>
+            <p className="text-xs uppercase tracking-widest text-slate-400">Live Preview</p>
 
             {/* Preview Image with Zones Overlay */}
-            <div className="overflow-hidden rounded-lg border border-zinc-800 bg-zinc-900/60">
+            <div className="overflow-hidden rounded-lg border border-slate-700/80 bg-slate-900/60">
                 {imageSrc ? (
                     <div
                         ref={overlayRef}
@@ -141,25 +141,25 @@ export function PreviewWithZones({
 
                                     {/* Top-Left Corner Handle */}
                                     <div
-                                        className="absolute -top-2 -left-2 size-4 cursor-nwse-resize rounded-full bg-cyan-500/60 hover:bg-cyan-500"
+                                        className="absolute -top-2 -left-2 size-4 cursor-nwse-resize rounded-full border border-blue-300/50 bg-blue-500/70 hover:bg-blue-400"
                                         onPointerDown={(e) => handleCornerPointerDown(e, index, "tl")}
                                     />
 
                                     {/* Top-Right Corner Handle */}
                                     <div
-                                        className="absolute -top-2 -right-2 size-4 cursor-nesw-resize rounded-full bg-cyan-500/60 hover:bg-cyan-500"
+                                        className="absolute -top-2 -right-2 size-4 cursor-nesw-resize rounded-full border border-blue-300/50 bg-blue-500/70 hover:bg-blue-400"
                                         onPointerDown={(e) => handleCornerPointerDown(e, index, "tr")}
                                     />
 
                                     {/* Bottom-Left Corner Handle */}
                                     <div
-                                        className="absolute -bottom-2 -left-2 size-4 cursor-nesw-resize rounded-full bg-cyan-500/60 hover:bg-cyan-500"
+                                        className="absolute -bottom-2 -left-2 size-4 cursor-nesw-resize rounded-full border border-blue-300/50 bg-blue-500/70 hover:bg-blue-400"
                                         onPointerDown={(e) => handleCornerPointerDown(e, index, "bl")}
                                     />
 
                                     {/* Bottom-Right Corner Handle */}
                                     <div
-                                        className="absolute -bottom-2 -right-2 size-4 cursor-nwse-resize rounded-full bg-cyan-500/60 hover:bg-cyan-500"
+                                        className="absolute -bottom-2 -right-2 size-4 cursor-nwse-resize rounded-full border border-blue-300/50 bg-blue-500/70 hover:bg-blue-400"
                                         onPointerDown={(e) => handleCornerPointerDown(e, index, "br")}
                                     />
                                 </div>
@@ -167,7 +167,7 @@ export function PreviewWithZones({
                         })}
                     </div>
                 ) : (
-                    <div className="flex min-h-64 items-center justify-center px-3 text-center text-sm text-zinc-500">
+                    <div className="flex min-h-64 items-center justify-center px-3 text-center text-sm text-slate-400">
                         Frame is not ready yet. Start the recognition pipeline and wait a few seconds.
                     </div>
                 )}

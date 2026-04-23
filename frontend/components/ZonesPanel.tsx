@@ -54,9 +54,9 @@ export function ZonesPanel({
     const messageColor = zonesMessage?.toLowerCase().includes("saved") ? "text-emerald-300" : "text-red-300"
 
     return (
-        <section className="space-y-3 rounded-lg border border-zinc-800 bg-zinc-950/70 p-4">
+        <section className="space-y-3 rounded-lg border border-slate-700/80 bg-slate-900/65 p-4">
             <div className="flex items-center justify-between">
-                <h3 className="text-xs uppercase tracking-widest text-zinc-500">
+                <h3 className="text-xs uppercase tracking-widest text-slate-400">
                     Zones ({zones.length}/{maxZones})
                 </h3>
             </div>
@@ -82,7 +82,7 @@ export function ZonesPanel({
                         }
                         onChangeZones([...zones, newZone])
                     }}
-                    className="w-full"
+                    className="w-full border border-slate-600/70 bg-slate-700/85 text-slate-100 hover:bg-slate-600/90"
                 >
                     + Add Zone
                 </Button>
@@ -90,24 +90,24 @@ export function ZonesPanel({
 
             {/* Zones List */}
             {zones.length > 0 ? (
-                <div className="space-y-2 border-t border-zinc-800 pt-3">
+                <div className="space-y-2 border-t border-slate-700/70 pt-3">
                     {visibleZones.map((zone, index) => {
                         const sourceIndex = zones.findIndex((item) => item.id === zone.id)
                         const zoneIndex = sourceIndex >= 0 ? sourceIndex : index
                         return (
                             <div
                                 key={`${zone.id}-${index}`}
-                                className="space-y-2 rounded border border-zinc-800 bg-zinc-900/50 p-2"
+                                className="space-y-2 rounded border border-slate-700/70 bg-slate-800/55 p-2"
                             >
                                 <div className="grid grid-cols-[1fr_auto_auto] items-center gap-2">
-                                    <p className="truncate text-xs text-zinc-300" title={inferZoneLabel(zone, zoneIndex)}>
+                                    <p className="truncate text-xs text-slate-200" title={inferZoneLabel(zone, zoneIndex)}>
                                         {inferZoneLabel(zone, zoneIndex)}
                                     </p>
                                     <button
                                         type="button"
-                                        className={`rounded px-2 py-1 text-xs font-medium transition ${zone.is_enabled
-                                            ? "bg-emerald-500/20 text-emerald-200"
-                                            : "bg-zinc-700 text-zinc-400"
+                                        className={`rounded-md px-2 py-1 text-xs font-medium transition ${zone.is_enabled
+                                            ? "border border-emerald-500/40 bg-emerald-500/15 text-emerald-200"
+                                            : "border border-slate-600/80 bg-slate-700/80 text-slate-300"
                                             }`}
                                         onClick={() =>
                                             onUpdateZone(zoneIndex, (prev) => ({ ...prev, is_enabled: !prev.is_enabled }))
@@ -117,7 +117,7 @@ export function ZonesPanel({
                                     </button>
                                     <button
                                         type="button"
-                                        className="rounded bg-red-500/20 px-2 py-1 text-xs text-red-200 hover:bg-red-500/30"
+                                        className="rounded-md border border-red-500/40 bg-red-500/15 px-2 py-1 text-xs text-red-200 hover:bg-red-500/25"
                                         onClick={() => onRemoveZone(zoneIndex)}
                                     >
                                         Delete
@@ -125,7 +125,7 @@ export function ZonesPanel({
                                 </div>
 
                                 <div className="grid gap-2">
-                                    <label className="space-y-1 text-[11px] text-zinc-500">
+                                    <label className="space-y-1 text-[11px] text-slate-400">
                                         <span>Open Entity ID</span>
                                         <input
                                             value={zone.ha_open_entity_id ?? ""}
@@ -140,12 +140,12 @@ export function ZonesPanel({
                                                     }
                                                 })
                                             }
-                                            className="rounded border border-zinc-700 bg-zinc-950 px-2 py-1 text-xs text-zinc-200 outline-none focus:border-cyan-500"
+                                            className="rounded border border-slate-600 bg-slate-900 px-2 py-1 text-xs text-slate-100 outline-none focus:border-blue-400"
                                             placeholder="input_button.gate_open"
                                         />
                                     </label>
 
-                                    <label className="space-y-1 text-[11px] text-zinc-500">
+                                    <label className="space-y-1 text-[11px] text-slate-400">
                                         <span>Close Entity ID</span>
                                         <input
                                             value={zone.ha_close_entity_id ?? ""}
@@ -160,12 +160,12 @@ export function ZonesPanel({
                                                     }
                                                 })
                                             }
-                                            className="rounded border border-zinc-700 bg-zinc-950 px-2 py-1 text-xs text-zinc-200 outline-none focus:border-cyan-500"
+                                            className="rounded border border-slate-600 bg-slate-900 px-2 py-1 text-xs text-slate-100 outline-none focus:border-blue-400"
                                             placeholder="input_button.gate_close"
                                         />
                                     </label>
 
-                                    <label className="space-y-1 text-[11px] text-zinc-500">
+                                    <label className="space-y-1 text-[11px] text-slate-400">
                                         <span>Label (optional)</span>
                                         <input
                                             value={zone.name ?? ""}
@@ -187,12 +187,12 @@ export function ZonesPanel({
                                                     }
                                                 })
                                             }
-                                            className="rounded border border-zinc-700 bg-zinc-950 px-2 py-1 text-xs text-zinc-200 outline-none focus:border-cyan-500"
+                                            className="rounded border border-slate-600 bg-slate-900 px-2 py-1 text-xs text-slate-100 outline-none focus:border-blue-400"
                                             placeholder="Optional display label"
                                         />
                                     </label>
 
-                                    <p className="text-[11px] text-zinc-500">
+                                    <p className="text-[11px] text-slate-400">
                                         If label is empty, it is auto-filled from entity IDs. Duplicate entity IDs across zones are allowed.
                                     </p>
                                 </div>
@@ -201,21 +201,27 @@ export function ZonesPanel({
                     })}
                 </div>
             ) : (
-                <p className="text-xs text-zinc-500">No zones configured. Add a zone and set entity IDs.</p>
+                <p className="text-xs text-slate-400">No zones configured. Add a zone and set entity IDs.</p>
             )}
 
             {/* Action Buttons */}
-            <div className="flex gap-2 border-t border-zinc-800 pt-3">
+            <div className="flex gap-2 border-t border-slate-700/70 pt-3">
                 <Button
                     size="sm"
                     variant="default"
                     onClick={onSaveZones}
                     disabled={!zonesDirty || zonesSaving}
-                    className="flex-1 bg-cyan-600 hover:bg-cyan-700"
+                    className="flex-1 border border-blue-400/30 bg-blue-600/85 text-blue-50 hover:bg-blue-500"
                 >
                     {zonesSaving ? "Saving..." : "Save"}
                 </Button>
-                <Button size="sm" variant="secondary" onClick={onResetZones} disabled={!zonesDirty}>
+                <Button
+                    size="sm"
+                    variant="secondary"
+                    onClick={onResetZones}
+                    disabled={!zonesDirty}
+                    className="border border-slate-600/70 bg-slate-700/80 text-slate-100 hover:bg-slate-600/90"
+                >
                     Reset
                 </Button>
             </div>

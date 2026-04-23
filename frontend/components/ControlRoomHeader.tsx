@@ -45,6 +45,7 @@ export function ControlRoomHeader({
     refreshing = false,
 }: ControlRoomHeaderProps) {
     const [isCameraMenuOpen, setIsCameraMenuOpen] = useState(false)
+    const [highlightedIndex, setHighlightedIndex] = useState(-1)
     const cameraMenuRef = useRef<HTMLDivElement | null>(null)
 
     const selectedCamera = useMemo(
@@ -62,11 +63,91 @@ export function ControlRoomHeader({
             }
         }
 
+        function handleEscape(event: KeyboardEvent) {
+            if (event.key === "Escape") {
+                setIsCameraMenuOpen(false)
+                setHighlightedIndex(-1)
+            }
+        }
+
         document.addEventListener("mousedown", handleOutsideClick)
+        document.addEventListener("keydown", handleEscape)
         return () => {
             document.removeEventListener("mousedown", handleOutsideClick)
+            document.removeEventListener("keydown", handleEscape)
         }
     }, [])
+
+    useEffect(() => {
+        if (!isCameraMenuOpen) {
+            setHighlightedIndex(-1)
+            return
+        }
+
+        const selectedIndex = selectedCamera
+            ? cameras.findIndex((camera) => camera.id === selectedCamera.id)
+            : 0
+        setHighlightedIndex(selectedIndex >= 0 ? selectedIndex : 0)
+    }, [isCameraMenuOpen, cameras, selectedCamera])
+
+    function activateMenuItem(index: number) {
+        if (index === cameras.length) {
+            setIsCameraMenuOpen(false)
+            onAddCamera()
+            return
+        }
+
+        const camera = cameras[index]
+        if (!camera) {
+            return
+        }
+        onSelectCamera(camera.id)
+        setIsCameraMenuOpen(false)
+    }
+
+    function handleMenuKeyDown(event: React.KeyboardEvent<HTMLButtonElement>) {
+        const itemCount = cameras.length + 1
+
+        if (!isCameraMenuOpen && (event.key === "ArrowDown" || event.key === "ArrowUp")) {
+            event.preventDefault()
+            setIsCameraMenuOpen(true)
+            return
+        }
+
+        if (!isCameraMenuOpen) {
+            return
+        }
+
+        if (event.key === "ArrowDown") {
+            event.preventDefault()
+            setHighlightedIndex((prev) => (prev + 1 + itemCount) % itemCount)
+            return
+        }
+
+        if (event.key === "ArrowUp") {
+            event.preventDefault()
+            setHighlightedIndex((prev) => (prev - 1 + itemCount) % itemCount)
+            return
+        }
+
+        if (event.key === "Home") {
+            event.preventDefault()
+            setHighlightedIndex(0)
+            return
+        }
+
+        if (event.key === "End") {
+            event.preventDefault()
+            setHighlightedIndex(itemCount - 1)
+            return
+        }
+
+        if (event.key === "Enter") {
+            event.preventDefault()
+            const index = highlightedIndex >= 0 ? highlightedIndex : 0
+            activateMenuItem(index)
+        }
+    }
 
     const syncStatus = syncAgeSec === null ? "⚠ Pending" : "✓ Connected"
 
@@ -81,6 +162,7 @@ export function ControlRoomHeader({
                     <button
                         type="button"
                         onClick={() => setIsCameraMenuOpen((open) => !open)}
+                        onKeyDown={handleMenuKeyDown}
                         className="flex w-full items-center justify-between gap-2 rounded-xl border border-slate-600/70 bg-slate-800/70 px-3 py-2 text-left text-sm font-medium text-slate-100 transition hover:border-slate-500 hover:bg-slate-700/80"
                         aria-haspopup="menu"
                         aria-expanded={isCameraMenuOpen}
@@ -90,42 +172,59 @@ export function ControlRoomHeader({
                     </button>
 
                     {isCameraMenuOpen && (
-                        <div className="absolute left-0 right-0 top-[calc(100%+8px)] z-50 overflow-hidden rounded-xl border border-slate-600/80 bg-slate-800/95 shadow-xl shadow-black/40">
-                            <ul className="max-h-64 overflow-y-auto p-1">
-                                {cameras.map((camera) => (
-                                    <li key={camera.id}>
-                                        <button
-                                            type="button"
-                                            onClick={() => {
-                                                onSelectCamera(camera.id)
-                                                setIsCameraMenuOpen(false)
-                                            }}
-                                            className={`flex w-full items-center justify-between rounded-lg px-3 py-2 text-sm transition ${selectedCamera?.id === camera.id
-                                                ? "bg-blue-500/20 text-blue-200"
-                                                : "text-slate-200 hover:bg-slate-700/70"
-                                                }`}
-                                        >
-                                            <span className="truncate">{camera.name}</span>
-                                            {camera.is_active && <span className="text-[11px] uppercase tracking-wide text-slate-400">active</span>}
-                                        </button>
-                                    </li>
-                                ))}
-                            </ul>
+                        <>
+                            <div
+                                className="fixed inset-0 z-40 bg-black/35 sm:hidden"
+                                onClick={() => setIsCameraMenuOpen(false)}
+                                aria-hidden="true"
+                            />
 
-                            <div className="border-t border-slate-600/70 p-1">
-                                <button
-                                    type="button"
-                                    onClick={() => {
-                                        setIsCameraMenuOpen(false)
-                                        onAddCamera()
-                                    }}
-                                    className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-sm font-medium text-blue-200 transition hover:bg-blue-500/15"
-                                >
-                                    <Plus className="size-4" />
-                                    Add camera
-                                </button>
+                            <div className="fixed inset-x-0 top-16 z-50 border-y border-slate-600/80 bg-slate-900/95 px-3 py-3 shadow-xl shadow-black/40 sm:absolute sm:left-0 sm:right-0 sm:top-[calc(100%+8px)] sm:rounded-xl sm:border sm:bg-slate-800/95 sm:p-0">
+                                <ul className="max-h-[45vh] overflow-y-auto p-1 sm:max-h-64">
+                                    {cameras.map((camera, index) => (
+                                        <li key={camera.id}>
+                                            <button
+                                                type="button"
+                                                onClick={() => {
+                                                    onSelectCamera(camera.id)
+                                                    setIsCameraMenuOpen(false)
+                                                }}
+                                                onMouseEnter={() => setHighlightedIndex(index)}
+                                                onFocus={() => setHighlightedIndex(index)}
+                                                className={`flex w-full items-center justify-between rounded-lg px-3 py-2 text-sm transition ${selectedCamera?.id === camera.id
+                                                    ? "bg-blue-500/20 text-blue-200"
+                                                    : highlightedIndex === index
+                                                        ? "bg-slate-700/80 text-slate-100"
+                                                        : "text-slate-200 hover:bg-slate-700/70"
+                                                    }`}
+                                            >
+                                                <span className="truncate">{camera.name}</span>
+                                                {camera.is_active && <span className="text-[11px] uppercase tracking-wide text-slate-400">active</span>}
+                                            </button>
+                                        </li>
+                                    ))}
+                                </ul>
+
+                                <div className="border-t border-slate-600/70 p-1">
+                                    <button
+                                        type="button"
+                                        onClick={() => {
+                                            setIsCameraMenuOpen(false)
+                                            onAddCamera()
+                                        }}
+                                        onMouseEnter={() => setHighlightedIndex(cameras.length)}
+                                        onFocus={() => setHighlightedIndex(cameras.length)}
+                                        className={`flex w-full items-center gap-2 rounded-lg px-3 py-2 text-sm font-medium transition ${highlightedIndex === cameras.length
+                                            ? "bg-blue-500/25 text-blue-100"
+                                            : "text-blue-200 hover:bg-blue-500/15"
+                                            }`}
+                                    >
+                                        <Plus className="size-4" />
+                                        Add camera
+                                    </button>
+                                </div>
                             </div>
-                        </div>
+                        </>
                     )}
                 </div>
 
