@@ -116,40 +116,19 @@ export default function Page() {
 
 
   return (
-    <main className="min-h-svh bg-gradient-to-b from-slate-950 via-zinc-900 to-zinc-950 text-zinc-100">
-      <div className="mx-auto flex w-full max-w-7xl flex-col gap-5 px-4 py-6 sm:px-6 lg:px-8">
-        {/* Camera Tabs */}
-        {cameras.length > 0 && (
-          <div className="flex flex-wrap items-center gap-2 border-b border-zinc-700 pb-4">
-            {cameras.map((camera) => (
-              <button
-                key={camera.id}
-                onClick={() => setSelectedCameraId(camera.id)}
-                className={`px-4 py-2 rounded font-medium transition-colors ${selectedCameraId === camera.id
-                  ? "bg-blue-600 text-white"
-                  : "bg-zinc-800 text-zinc-300 hover:bg-zinc-700"
-                  }`}
-              >
-                {camera.name}
-              </button>
-            ))}
-            <button
-              onClick={() => setIsAddingCamera(true)}
-              className="ml-auto px-3 py-2 text-sm text-zinc-400 hover:text-zinc-200 transition-colors"
-              title="Add camera"
-            >
-              + Add Camera
-            </button>
-          </div>
-        )}
+    <main className="min-h-svh bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900 text-slate-100">
+      <ControlRoomHeader
+        cameras={cameras}
+        selectedCameraId={selectedCameraId}
+        onSelectCamera={setSelectedCameraId}
+        onAddCamera={() => setIsAddingCamera(true)}
+        syncAgeSec={syncAgeSec}
+        onRefresh={() => void refresh()}
+        onForceSync={() => void runForceSync()}
+        refreshing={refreshing}
+      />
 
-        {/* Row 1: Header */}
-        <ControlRoomHeader
-          syncAgeSec={syncAgeSec}
-          onRefresh={() => void refresh()}
-          onForceSync={() => void runForceSync()}
-          refreshing={refreshing}
-        />
+      <div className="mx-auto flex w-full max-w-7xl flex-col gap-5 px-4 py-6 sm:px-6 lg:px-8">
 
         {/* Alerts */}
         {isStale && (
@@ -216,11 +195,11 @@ export default function Page() {
       {/* Event Modal */}
       {selectedEventId !== null && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 p-4">
-          <div className="w-full max-w-5xl rounded-xl border border-zinc-800 bg-zinc-950 p-4 shadow-2xl">
+          <div className="w-full max-w-5xl rounded-xl border border-slate-700/90 bg-slate-900 p-4 shadow-2xl">
             <div className="mb-3 flex items-center justify-between">
               <div>
-                <p className="text-xs uppercase tracking-[0.18em] text-zinc-500">Event Snapshot</p>
-                <p className="mt-1 text-sm text-zinc-300">
+                <p className="text-xs uppercase tracking-[0.18em] text-slate-400">Event Snapshot</p>
+                <p className="mt-1 text-sm text-slate-200">
                   {selectedEvent
                     ? `${formatTime(selectedEvent.occurred_at)} • ${selectedEvent.plate || selectedEvent.raw_plate} • ${selectedEvent.decision}`
                     : "Event"}
@@ -231,7 +210,7 @@ export default function Page() {
               </Button>
             </div>
 
-            <div className="overflow-hidden rounded-lg border border-zinc-800 bg-zinc-900/60">
+            <div className="overflow-hidden rounded-lg border border-slate-700/80 bg-slate-800/60">
               {selectedImageSrc && !selectedImageError ? (
                 // eslint-disable-next-line @next/next/no-img-element
                 <img
@@ -241,7 +220,7 @@ export default function Page() {
                   onError={() => setSelectedImageError("Snapshot for this event has not been found yet")}
                 />
               ) : (
-                <div className="flex min-h-64 items-center justify-center px-4 text-center text-sm text-zinc-400">
+                <div className="flex min-h-64 items-center justify-center px-4 text-center text-sm text-slate-300">
                   {selectedImageError ?? "Snapshot unavailable"}
                 </div>
               )}
