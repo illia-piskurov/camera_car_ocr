@@ -54,6 +54,7 @@ def record_decision_event(
     decision: str,
     reason_code: str,
     db: Database,
+    camera_id: int | None = None,
 ) -> None:
     """Record a decision event to the database.
 
@@ -62,6 +63,7 @@ def record_decision_event(
         decision: "observed", "open", or "deny".
         reason_code: Event reason code (e.g., "raw_detection", "open_approved").
         db: Database connection.
+        camera_id: Optional camera ID for event attribution.
     """
     db.record_event(
         occurred_at=detection.detected_at,
@@ -77,6 +79,7 @@ def record_decision_event(
         zone_name=detection.zone_name,
         decision=decision,
         reason_code=reason_code,
+        camera_id=camera_id,
     )
 
 

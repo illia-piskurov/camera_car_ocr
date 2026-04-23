@@ -52,10 +52,7 @@ def _load_local_env_files() -> None:
 
 @dataclass(frozen=True)
 class Settings:
-    camera_snapshot_url: str = "http://192.168.30.206:86/ISAPI/Streaming/channels/502/picture"
-    camera_username: str = ""
-    camera_password: str = ""
-    camera_auth_mode: str = "digest"
+    camera_credentials_encryption_key: str = "camera-car-ocr-dev-key"
     poll_interval_sec: float = 0.4
     request_timeout_sec: float = 5.0
     request_retries: int = 2
@@ -125,6 +122,23 @@ class Settings:
             return self.zone2_barrier_open_entity_id, self.zone2_barrier_close_entity_id
         return "", ""
 
+    def get_camera_credentials_encryption_key(self) -> str:
+        return self.camera_credentials_encryption_key
+
+    def _scoped_preview_path(self, base_path: str, camera_id: int | None) -> str:
+        if camera_id is None:
+            return base_path
+
+        base = Path(base_path)
+        suffix = base.suffix or ""
+        return str(base.with_name(f"{base.stem}_camera_{camera_id}{suffix}"))
+
+    def get_preview_image_path(self, camera_id: int | None = None) -> str:
+        return self._scoped_preview_path(self.preview_image_path, camera_id)
+
+    def get_preview_meta_path(self, camera_id: int | None = None) -> str:
+        return self._scoped_preview_path(self.preview_meta_path, camera_id)
+
     def get_zone_close_delay_sec(self, zone_id: int | None) -> float:
         if zone_id == 1 and self.zone1_barrier_close_delay_sec > 0:
             return self.zone1_barrier_close_delay_sec
@@ -136,10 +150,9 @@ class Settings:
     def from_env() -> "Settings":
         _load_local_env_files()
         return Settings(
-            camera_snapshot_url=os.getenv("CAMERA_SNAPSHOT_URL", Settings.camera_snapshot_url),
-            camera_username=os.getenv("CAMERA_USERNAME", Settings.camera_username),
-            camera_password=os.getenv("CAMERA_PASSWORD", Settings.camera_password),
-            camera_auth_mode=os.getenv("CAMERA_AUTH_MODE", Settings.camera_auth_mode),
+            camera_credentials_encryption_key=os.getenv(
+                "CAMERA_CREDENTIALS_ENCRYPTION_KEY", Settings.camera_credentials_encryption_key
+            ),
             poll_interval_sec=float(os.getenv("POLL_INTERVAL_SEC", Settings.poll_interval_sec)),
             request_timeout_sec=float(os.getenv("REQUEST_TIMEOUT_SEC", Settings.request_timeout_sec)),
             request_retries=int(os.getenv("REQUEST_RETRIES", Settings.request_retries)),

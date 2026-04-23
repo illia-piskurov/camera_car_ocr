@@ -1,12 +1,35 @@
-export type DetectionZone = {
+export type Camera = {
     id: number
     name: string
+    snapshot_url: string
+    auth_mode: string
+    is_active: boolean
+    sort_order: number
+    created_at: string
+    updated_at: string
+    has_credentials: boolean
+}
+
+export type CameraCreatePayload = {
+    name: string
+    snapshot_url: string
+    username: string
+    password: string
+    auth_mode: string
+}
+
+export type DetectionZone = {
+    id: number
+    name?: string
     x_min: number
     y_min: number
     x_max: number
     y_max: number
     is_enabled: boolean
     sort_order: number
+    camera_id?: number | null
+    ha_open_entity_id?: string
+    ha_close_entity_id?: string
 }
 
 export type DashboardEvent = {

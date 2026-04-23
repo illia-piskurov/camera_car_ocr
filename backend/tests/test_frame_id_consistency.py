@@ -25,12 +25,30 @@ def test_run_uses_same_frame_id_for_two_shot_cycle(monkeypatch) -> None:
 
     class DbStub:
         @staticmethod
+        def init():
+            return
+
+        @staticmethod
+        def get_camera(camera_id: int):
+            return {
+                "id": camera_id,
+                "name": "Camera 1",
+                "snapshot_url": "http://test.local/snapshot",
+                "is_active": True,
+            }
+
+        @staticmethod
+        def get_camera_credentials(camera_id: int, encryption_key: str):
+            _ = (camera_id, encryption_key)
+            return ("admin", "password", "http_basic")
+
+        @staticmethod
         def is_sync_due(_hours: float) -> bool:
             return False
 
         @staticmethod
-        def get_zones(include_disabled: bool = False):
-            _ = include_disabled
+        def get_zones(include_disabled: bool = False, camera_id: int | None = None):
+            _ = (include_disabled, camera_id)
             return [
                 {
                     "id": 1,
@@ -50,10 +68,21 @@ def test_run_uses_same_frame_id_for_two_shot_cycle(monkeypatch) -> None:
             _ = (reason, plate, zone_id)
             return True
 
+    camera = CameraStub()
+    db = DbStub()
+    barrier = BarrierStub()
+
     cfg = SimpleNamespace(
-        onec_sync_interval_hours=24.0,
+        db_path=":memory:",
+        request_timeout_sec=5.0,
+        request_retries=3,
         dry_run_open=True,
         barrier_action_mode="mock",
+        barrier_ha_base_url="http://ha.local",
+        barrier_ha_token="test-token",
+        barrier_request_timeout_sec=5.0,
+        barrier_request_retries=3,
+        barrier_verify_tls=False,
         poll_interval_sec=0.4,
         detection_zones_max=2,
         motion_detection_enabled=False,
@@ -62,16 +91,9 @@ def test_run_uses_same_frame_id_for_two_shot_cycle(monkeypatch) -> None:
         two_shot_max_pairs=1,
         two_shot_gap_ms=0,
         ocr_open_threshold=0.92,
-    )
-
-    camera = CameraStub()
-    db = DbStub()
-    barrier = BarrierStub()
-
-    monkeypatch.setattr(
-        orchestrator,
-        "_initialize_pipeline",
-        lambda _cfg: (camera, SimpleNamespace(), barrier, db, SimpleNamespace(source="stub")),
+        detector_model="yolov8n",
+        ocr_model="easyocr",
+        get_camera_credentials_encryption_key=lambda: "test-key",
     )
 
     def fake_detect_in_zones(*, frame, alpr, detected_at, frame_id, active_zones):
@@ -79,6 +101,33 @@ def test_run_uses_same_frame_id_for_two_shot_cycle(monkeypatch) -> None:
         detect_calls.append(frame_id)
         return [], {}
 
+    # Mock Database constructor
+    monkeypatch.setattr(orchestrator.Database, "__new__", lambda *args, **kwargs: db)
+
+    # Mock SnapshotCameraClient to return our stub
+    monkeypatch.setattr(
+        orchestrator.SnapshotCameraClient,
+        "__init__",
+        lambda self, **kwargs: None,
+    )
+    monkeypatch.setattr(
+        orchestrator.SnapshotCameraClient,
+        "fetch_frame",
+        camera.fetch_frame,
+    )
+    monkeypatch.setattr(
+        orchestrator.SnapshotCameraClient,
+        "close",
+        camera.close,
+    )
+
+    # Mock AlprService
+    monkeypatch.setattr(orchestrator.AlprService, "__new__", lambda *args, **kwargs: SimpleNamespace())
+
+    # Mock BarrierController
+    monkeypatch.setattr(orchestrator.BarrierController, "__new__", lambda *args, **kwargs: barrier)
+
+    # Mock helper functions
     monkeypatch.setattr(orchestrator, "_detect_in_zones", fake_detect_in_zones)
     monkeypatch.setattr(
         orchestrator,
@@ -94,7 +143,6 @@ def test_run_uses_same_frame_id_for_two_shot_cycle(monkeypatch) -> None:
     monkeypatch.setattr(orchestrator, "_refresh_zone_hold", lambda **kwargs: None)
     monkeypatch.setattr(orchestrator, "_snapshot_stage", lambda **kwargs: None)
     monkeypatch.setattr(orchestrator, "_preview_stage", lambda **kwargs: None)
-
     sleep_calls = {"count": 0}
 
     def fake_sleep(_seconds: float) -> None:
@@ -105,7 +153,7 @@ def test_run_uses_same_frame_id_for_two_shot_cycle(monkeypatch) -> None:
 
     monkeypatch.setattr(orchestrator.time, "sleep", fake_sleep)
 
-    orchestrator.run(settings=cfg)
+    orchestrator.run_camera_worker(1, settings=cfg)
 
     assert len(detect_calls) == 2
     assert detect_calls[0] == detect_calls[1]

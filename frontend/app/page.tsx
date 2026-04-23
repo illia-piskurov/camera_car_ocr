@@ -7,9 +7,10 @@ import { ControlRoomHeader } from "@/components/ControlRoomHeader"
 import { PreviewWithZones } from "@/components/PreviewWithZones"
 import { ZonesPanel } from "@/components/ZonesPanel"
 import { EventsTable } from "@/components/EventsTable"
-import { saveZones, toEventImageSrc } from "@/lib/api"
+import { OnboardingPanel } from "@/components/OnboardingPanel"
+import { saveZones, saveCameraZones, toEventImageSrc } from "@/lib/api"
 import { useDashboard } from "@/hooks/use-dashboard"
-import type { DetectionZone } from "@/lib/types"
+import type { Camera, DetectionZone } from "@/lib/types"
 
 function formatTime(value: string | null | undefined) {
   if (!value) {
@@ -19,14 +20,24 @@ function formatTime(value: string | null | undefined) {
 }
 
 export default function Page() {
-  const { data, preview, previewImageSrc, loading, error, refreshing, isStale, syncAgeSec, refresh, runForceSync } =
-    useDashboard()
+  const [selectedCameraId, setSelectedCameraId] = useState<number | null>(null)
+  const [isAddingCamera, setIsAddingCamera] = useState(false)
+  const { data, preview, previewImageSrc, cameras, loading, error, refreshing, isStale, syncAgeSec, refresh, runForceSync } =
+    useDashboard(selectedCameraId)
   const [selectedEventId, setSelectedEventId] = useState<number | null>(null)
   const [selectedImageError, setSelectedImageError] = useState<string | null>(null)
   const [zoneDraft, setZoneDraft] = useState<DetectionZone[]>([])
   const [zonesDirty, setZonesDirty] = useState(false)
   const [zonesSaving, setZonesSaving] = useState(false)
   const [zonesMessage, setZonesMessage] = useState<string | null>(null)
+
+  // Set default camera on first load
+  useEffect(() => {
+    if (cameras.length > 0 && selectedCameraId === null) {
+      const activeCamera = cameras.find((c) => c.is_active)
+      setSelectedCameraId(activeCamera?.id ?? cameras[0]?.id ?? null)
+    }
+  }, [cameras, selectedCameraId])
 
   useEffect(() => {
     if (!zonesDirty && preview?.zones) {
@@ -38,11 +49,36 @@ export default function Page() {
   const selectedImageSrc = selectedEventId !== null ? toEventImageSrc(selectedEventId) : null
   const maxZones = preview?.max_zones ?? 2
 
+  // Show onboarding if no cameras or when user explicitly opens add camera flow.
+  if ((!loading && cameras.length === 0) || isAddingCamera) {
+    return (
+      <OnboardingPanel
+        onCameraAdded={(camera) => {
+          setIsAddingCamera(false)
+          setSelectedCameraId(camera.id)
+          void refresh()
+        }}
+        isFirstCameraFlow={cameras.length === 0}
+        onCancel={
+          cameras.length > 0
+            ? () => {
+              setIsAddingCamera(false)
+            }
+            : undefined
+        }
+      />
+    )
+  }
+
   async function handleSaveZones() {
     setZonesSaving(true)
     setZonesMessage(null)
     try {
-      await saveZones(zoneDraft)
+      if (selectedCameraId) {
+        await saveCameraZones(selectedCameraId, zoneDraft)
+      } else {
+        await saveZones(zoneDraft)
+      }
       setZonesDirty(false)
       setZonesMessage("Zones saved")
       await refresh()
@@ -72,23 +108,27 @@ export default function Page() {
       .map((zone, zoneIndex) => ({
         ...zone,
         sort_order: zoneIndex,
-        name: zone.name || `Zone ${zoneIndex + 1}`,
       }))
     setZoneDraft(updated)
     setZonesDirty(true)
     setZonesMessage(null)
   }
 
+
   return (
-    <main className="min-h-svh bg-gradient-to-b from-slate-950 via-zinc-900 to-zinc-950 text-zinc-100">
+    <main className="min-h-svh bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900 text-slate-100">
+      <ControlRoomHeader
+        cameras={cameras}
+        selectedCameraId={selectedCameraId}
+        onSelectCamera={setSelectedCameraId}
+        onAddCamera={() => setIsAddingCamera(true)}
+        syncAgeSec={syncAgeSec}
+        onRefresh={() => void refresh()}
+        onForceSync={() => void runForceSync()}
+        refreshing={refreshing}
+      />
+
       <div className="mx-auto flex w-full max-w-7xl flex-col gap-5 px-4 py-6 sm:px-6 lg:px-8">
-        {/* Row 1: Header */}
-        <ControlRoomHeader
-          syncAgeSec={syncAgeSec}
-          onRefresh={() => void refresh()}
-          onForceSync={() => void runForceSync()}
-          refreshing={refreshing}
-        />
 
         {/* Alerts */}
         {isStale && (
@@ -104,7 +144,7 @@ export default function Page() {
         )}
 
         {/* Row 2: Preview (left 2/3) + Zones Panel (right 1/3) */}
-        <section className="grid gap-4 grid-cols-[2fr_1fr]">
+        <section className="grid grid-cols-1 gap-4 lg:grid-cols-[2fr_1fr]">
           {/* Left: Preview */}
           <div className="ops-panel p-4">
             <PreviewWithZones
@@ -155,11 +195,11 @@ export default function Page() {
       {/* Event Modal */}
       {selectedEventId !== null && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 p-4">
-          <div className="w-full max-w-5xl rounded-xl border border-zinc-800 bg-zinc-950 p-4 shadow-2xl">
+          <div className="w-full max-w-5xl rounded-xl border border-slate-700/90 bg-slate-900 p-4 shadow-2xl">
             <div className="mb-3 flex items-center justify-between">
               <div>
-                <p className="text-xs uppercase tracking-[0.18em] text-zinc-500">Event Snapshot</p>
-                <p className="mt-1 text-sm text-zinc-300">
+                <p className="text-xs uppercase tracking-[0.18em] text-slate-400">Event Snapshot</p>
+                <p className="mt-1 text-sm text-slate-200">
                   {selectedEvent
                     ? `${formatTime(selectedEvent.occurred_at)} • ${selectedEvent.plate || selectedEvent.raw_plate} • ${selectedEvent.decision}`
                     : "Event"}
@@ -170,7 +210,7 @@ export default function Page() {
               </Button>
             </div>
 
-            <div className="overflow-hidden rounded-lg border border-zinc-800 bg-zinc-900/60">
+            <div className="overflow-hidden rounded-lg border border-slate-700/80 bg-slate-800/60">
               {selectedImageSrc && !selectedImageError ? (
                 // eslint-disable-next-line @next/next/no-img-element
                 <img
@@ -180,7 +220,7 @@ export default function Page() {
                   onError={() => setSelectedImageError("Snapshot for this event has not been found yet")}
                 />
               ) : (
-                <div className="flex min-h-64 items-center justify-center px-4 text-center text-sm text-zinc-400">
+                <div className="flex min-h-64 items-center justify-center px-4 text-center text-sm text-slate-300">
                   {selectedImageError ?? "Snapshot unavailable"}
                 </div>
               )}

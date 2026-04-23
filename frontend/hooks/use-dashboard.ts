@@ -2,12 +2,19 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 
-import { fetchDashboard, fetchPreview, forceSync, toPreviewImageSrc } from "@/lib/api"
-import type { DashboardData, PreviewData } from "@/lib/types"
+import {
+    fetchCameraDashboard,
+    fetchCameraPreview,
+    forceSync,
+    listCameras,
+    toPreviewImageSrc,
+} from "@/lib/api"
+import type { Camera, DashboardData, PreviewData } from "@/lib/types"
 
 type UseDashboardState = {
     data: DashboardData | null
     preview: PreviewData | null
+    cameras: Camera[]
     loading: boolean
     error: string | null
     refreshing: boolean
@@ -18,10 +25,11 @@ type UseDashboardState = {
 const POLL_MS = 2500
 const STALE_MS = 12000
 
-export function useDashboard() {
+export function useDashboard(selectedCameraId?: number | null) {
     const [state, setState] = useState<UseDashboardState>({
         data: null,
         preview: null,
+        cameras: [],
         loading: true,
         error: null,
         refreshing: false,
@@ -36,15 +44,33 @@ export function useDashboard() {
 
         const controller = new AbortController()
         try {
+            const cameras = await listCameras(controller.signal)
+
+            if (selectedCameraId == null) {
+                setState((prev) => ({
+                    ...prev,
+                    data: null,
+                    preview: null,
+                    cameras,
+                    loading: false,
+                    refreshing: false,
+                    error: null,
+                    lastUpdatedAt: new Date(),
+                    isStale: false,
+                }))
+                return
+            }
+
             const [data, preview] = await Promise.all([
-                fetchDashboard(controller.signal),
-                fetchPreview(controller.signal).catch(() => null),
+                fetchCameraDashboard(selectedCameraId, controller.signal),
+                fetchCameraPreview(selectedCameraId, controller.signal).catch(() => null),
             ])
 
             setState((prev) => ({
                 ...prev,
                 data,
                 preview,
+                cameras,
                 loading: false,
                 refreshing: false,
                 error: null,
@@ -59,7 +85,7 @@ export function useDashboard() {
                 error: error instanceof Error ? error.message : "Не удалось загрузить данные",
             }))
         }
-    }, [])
+    }, [selectedCameraId])
 
     const runForceSync = useCallback(async () => {
         await forceSync()
