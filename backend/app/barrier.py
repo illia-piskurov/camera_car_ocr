@@ -110,6 +110,15 @@ class BarrierController:
         last_exc: Exception | None = None
         for attempt in range(1, self.retries + 1):
             try:
+                LOG.info(
+                    "Barrier %s request attempt=%s/%s entity_id=%s zone=%s url=%s",
+                    action,
+                    attempt,
+                    self.retries,
+                    entity_id,
+                    zone_id if zone_id is not None else "full",
+                    url,
+                )
                 with httpx.Client(timeout=self.timeout_sec, verify=self.verify_tls) as client:
                     response = client.post(url, headers=headers, json=payload)
                     response.raise_for_status()
@@ -122,8 +131,48 @@ class BarrierController:
                     zone_id if zone_id is not None else "full",
                 )
                 return True
+            except httpx.HTTPStatusError as exc:
+                last_exc = exc
+                status_code = exc.response.status_code if exc.response is not None else "-"
+                response_body = ""
+                if exc.response is not None:
+                    response_body = (exc.response.text or "").strip()[:300]
+                LOG.warning(
+                    "Barrier %s HTTP failure attempt=%s/%s status=%s entity_id=%s zone=%s body=%s",
+                    action,
+                    attempt,
+                    self.retries,
+                    status_code,
+                    entity_id,
+                    zone_id if zone_id is not None else "full",
+                    response_body,
+                )
+                if attempt < self.retries:
+                    time.sleep(0.3 * attempt)
+            except httpx.RequestError as exc:
+                last_exc = exc
+                LOG.warning(
+                    "Barrier %s transport failure attempt=%s/%s entity_id=%s zone=%s error=%s",
+                    action,
+                    attempt,
+                    self.retries,
+                    entity_id,
+                    zone_id if zone_id is not None else "full",
+                    exc,
+                )
+                if attempt < self.retries:
+                    time.sleep(0.3 * attempt)
             except Exception as exc:  # noqa: BLE001
                 last_exc = exc
+                LOG.warning(
+                    "Barrier %s unexpected failure attempt=%s/%s entity_id=%s zone=%s error=%s",
+                    action,
+                    attempt,
+                    self.retries,
+                    entity_id,
+                    zone_id if zone_id is not None else "full",
+                    exc,
+                )
                 if attempt < self.retries:
                     time.sleep(0.3 * attempt)
 

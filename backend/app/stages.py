@@ -107,6 +107,12 @@ def execute_barrier_action(
         zone_states: Dict of zone runtime states, updated on successful open.
     """
     if not should_open:
+        LOG.info(
+            "Barrier open not attempted: decision is not open plate=%s zone=%s reason=%s",
+            detection.normalized_text,
+            detection.zone_id if detection.zone_id is not None else "full",
+            reason_code,
+        )
         return
 
     zone_id = detection.zone_id
@@ -117,6 +123,12 @@ def execute_barrier_action(
 
     # Suppress duplicate open if zone already open
     if state.is_open:
+        LOG.info(
+            "Barrier open suppressed: zone already open plate=%s zone=%s hold_until=%.3f",
+            plate,
+            zone_id if zone_id is not None else "full",
+            state.close_deadline_monotonic,
+        )
         return
 
     # Attempt barrier open
@@ -137,3 +149,17 @@ def execute_barrier_action(
         now_monotonic = time.monotonic()
         close_delay = max(0.1, cfg.get_zone_close_delay_sec(zone_id))
         state.mark_open(plate=plate, now_monotonic=now_monotonic, close_delay_sec=close_delay)
+        LOG.info(
+            "Barrier open confirmed plate=%s zone=%s close_delay_sec=%.2f",
+            plate,
+            zone_id if zone_id is not None else "full",
+            close_delay,
+        )
+        return
+
+    LOG.warning(
+        "Barrier open was attempted but not confirmed plate=%s zone=%s reason=%s",
+        plate,
+        zone_id if zone_id is not None else "full",
+        reason_code,
+    )

@@ -10,6 +10,8 @@ from .normalization import normalize_plate
 
 LOG = logging.getLogger(__name__)
 
+TEST_PLATE = "AA1234ZE"
+
 
 class WhitelistProvider(ABC):
     source: str = "unknown"
@@ -40,6 +42,9 @@ class StubFileWhitelistProvider(WhitelistProvider):
             if not norm.normalized:
                 continue
             values.append((norm.normalized, norm.fuzzy))
+
+        test_norm = normalize_plate(TEST_PLATE)
+        values.append((test_norm.normalized, test_norm.fuzzy))
 
         # Remove duplicates while preserving order.
         dedup = list(dict.fromkeys(values))
