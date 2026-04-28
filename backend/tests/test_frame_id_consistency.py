@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 from types import SimpleNamespace
 
@@ -7,7 +7,7 @@ import numpy as np
 from app import orchestrator
 
 
-def test_run_uses_same_frame_id_for_two_shot_cycle(monkeypatch) -> None:
+def test_run_uses_single_frame_fetch_per_cycle(monkeypatch) -> None:
     detect_calls: list[str] = []
 
     class CameraStub:
@@ -16,9 +16,9 @@ def test_run_uses_same_frame_id_for_two_shot_cycle(monkeypatch) -> None:
 
         def fetch_frame(self):
             self.calls += 1
-            if self.calls <= 2:
+            if self.calls <= 1:
                 return np.zeros((8, 8, 3), dtype=np.uint8)
-            return np.zeros((8, 8, 3), dtype=np.uint8)
+            return None
 
         def close(self) -> None:
             return
@@ -88,8 +88,6 @@ def test_run_uses_same_frame_id_for_two_shot_cycle(monkeypatch) -> None:
         motion_detection_enabled=False,
         motion_threshold_percent=0.05,
         motion_blur_kernel=5,
-        two_shot_max_pairs=1,
-        two_shot_gap_ms=0,
         ocr_open_threshold=0.92,
         detector_model="yolov8n",
         ocr_model="easyocr",
@@ -147,13 +145,13 @@ def test_run_uses_same_frame_id_for_two_shot_cycle(monkeypatch) -> None:
 
     def fake_sleep(_seconds: float) -> None:
         sleep_calls["count"] += 1
-        # First sleep is intra two-shot gap; second sleep is end-of-loop pause.
-        if sleep_calls["count"] >= 2:
+        # Single sleep is the end-of-loop poll_interval_sec pause.
+        if sleep_calls["count"] >= 1:
             raise KeyboardInterrupt()
 
     monkeypatch.setattr(orchestrator.time, "sleep", fake_sleep)
 
     orchestrator.run_camera_worker(1, settings=cfg)
 
-    assert len(detect_calls) == 2
-    assert detect_calls[0] == detect_calls[1]
+    assert len(detect_calls) == 1, f"Expected 1 detect call, got {len(detect_calls)}"
+    assert camera.calls == 1, f"Expected 1 camera.fetch_frame call, got {camera.calls}"

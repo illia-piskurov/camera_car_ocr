@@ -62,8 +62,6 @@ class Settings:
 
     ocr_open_threshold: float = 0.92
     ocr_extend_threshold: float = 0.80
-    two_shot_gap_ms: int = 200
-    two_shot_max_pairs: int = 2
 
     dry_run_open: bool = True
     barrier_action_mode: str = "mock"
@@ -163,10 +161,6 @@ class Settings:
             ),
             ocr_extend_threshold=float(
                 os.getenv("OCR_EXTEND_THRESHOLD", Settings.ocr_extend_threshold)
-            ),
-            two_shot_gap_ms=int(os.getenv("TWO_SHOT_GAP_MS", Settings.two_shot_gap_ms)),
-            two_shot_max_pairs=int(
-                os.getenv("TWO_SHOT_MAX_PAIRS", Settings.two_shot_max_pairs)
             ),
             dry_run_open=os.getenv("DRY_RUN_OPEN", "1") in {"1", "true", "True"},
             barrier_action_mode=os.getenv("BARRIER_ACTION_MODE", Settings.barrier_action_mode),

@@ -250,9 +250,7 @@ def camera_dashboard(camera_id: int) -> dict[str, object]:
             "zone2_close_delay_sec": cfg.get_zone_close_delay_sec(2),
             "ocr_open_threshold": cfg.ocr_open_threshold,
             "ocr_extend_threshold": cfg.ocr_extend_threshold,
-            "two_shot_gap_ms": cfg.two_shot_gap_ms,
-            "two_shot_max_pairs": cfg.two_shot_max_pairs,
-            "decision_model_version": "two-shot-v1",
+            "decision_model_version": "single-shot-v1",
             "legacy_config_deprecated": False,
         },
         "sync": {

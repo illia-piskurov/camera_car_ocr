@@ -182,57 +182,27 @@ def _detect_in_zones(
     return detections, zone_frames
 
 
-def _select_two_shot_candidate(
+def _select_best_detection(
     *,
-    first: list[PlateDetection],
-    second: list[PlateDetection],
+    detections: list[PlateDetection],
     min_ocr_confidence: float,
 ) -> PlateDetection | None:
-    """Select a confirmed detection present in both shots for the same zone.
+    """Select the best detection from a single frame based on OCR confidence.
 
-    Uses normalized plate text as the primary key and requires OCR confidence
-    threshold on both shots. If multiple candidates exist, prefers higher
-    minimum OCR confidence across the pair.
+    Prefers high-confidence detections and returns the one with the highest
+    confidence that meets the minimum threshold. Returns None if no detections
+    meet the threshold.
     """
-    first_map: dict[tuple[int | None, str], PlateDetection] = {}
-    second_map: dict[tuple[int | None, str], PlateDetection] = {}
+    if not detections:
+        return None
 
-    for item in first:
-        if item.ocr_confidence < min_ocr_confidence or not item.normalized_text:
-            continue
-        key = (item.zone_id, item.normalized_text)
-        current = first_map.get(key)
-        if current is None or item.ocr_confidence > current.ocr_confidence:
-            first_map[key] = item
+    # Filter detections that meet the OCR confidence threshold
+    qualified = [d for d in detections if d.ocr_confidence >= min_ocr_confidence]
+    if not qualified:
+        return None
 
-    for item in second:
-        if item.ocr_confidence < min_ocr_confidence or not item.normalized_text:
-            continue
-        key = (item.zone_id, item.normalized_text)
-        current = second_map.get(key)
-        if current is None or item.ocr_confidence > current.ocr_confidence:
-            second_map[key] = item
-
-    best: PlateDetection | None = None
-    best_pair_score = -1.0
-
-    for key, first_detection in first_map.items():
-        second_detection = second_map.get(key)
-        if second_detection is None:
-            continue
-
-        pair_score = min(first_detection.ocr_confidence, second_detection.ocr_confidence)
-        chosen = (
-            first_detection
-            if first_detection.ocr_confidence >= second_detection.ocr_confidence
-            else second_detection
-        )
-
-        if pair_score > best_pair_score:
-            best_pair_score = pair_score
-            best = chosen
-
-    return best
+    # Return the detection with the highest OCR confidence
+    return max(qualified, key=lambda d: d.ocr_confidence)
 
 
 def _handle_detections(
@@ -524,48 +494,24 @@ def _poll_single_camera(
         state.update_frame(frame)
         return
 
-    # Detect plates in zones using two-shot confirmation
+    # Detect plates in zones using single-shot detection
     detections: list[PlateDetection] = []
     zone_frames: dict[int, np.ndarray] = {}
     decision_detection: PlateDetection | None = None
 
     if not stage.skip_alpr_this_frame:
-        first_detections, zone_frames = _detect_in_zones(
+        detections, zone_frames = _detect_in_zones(
             frame=frame,
             alpr=alpr,
             detected_at=stage.now,
             frame_id=stage.frame_id,
             active_zones=stage.active_zones,
         )
-        detections.extend(first_detections)
 
-        pair_detections = first_detections
-        max_pairs = max(1, cfg.two_shot_max_pairs)
-        for pair_index in range(max_pairs):
-            time.sleep(max(0.0, cfg.two_shot_gap_ms / 1000.0))
-
-            second_frame = camera.fetch_frame()
-            if second_frame is None:
-                break
-
-            second_detections, _ = _detect_in_zones(
-                frame=second_frame,
-                alpr=alpr,
-                detected_at=datetime.now(timezone.utc),
-                frame_id=stage.frame_id,
-                active_zones=stage.active_zones,
-            )
-            detections.extend(second_detections)
-
-            decision_detection = _select_two_shot_candidate(
-                first=pair_detections,
-                second=second_detections,
-                min_ocr_confidence=cfg.ocr_open_threshold,
-            )
-            if decision_detection is not None:
-                break
-
-            pair_detections = second_detections
+        decision_detection = _select_best_detection(
+            detections=detections,
+            min_ocr_confidence=cfg.ocr_open_threshold,
+        )
 
     # Make decisions and act on detections
     detection_result = _handle_detections(
