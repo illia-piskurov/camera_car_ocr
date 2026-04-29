@@ -77,6 +77,7 @@ class Settings:
     barrier_request_retries: int = 2
     barrier_verify_tls: bool = True
     barrier_close_delay_sec: float = 5.0
+    log_file_path: str = "data/logs/backend.log"
 
     db_path: str = "data/app.db"
     onec_sync_interval_hours: float = 24.0
@@ -194,6 +195,7 @@ class Settings:
             barrier_close_delay_sec=float(
                 os.getenv("BARRIER_CLOSE_DELAY_SEC", Settings.barrier_close_delay_sec)
             ),
+            log_file_path=os.getenv("LOG_FILE_PATH", Settings.log_file_path),
             db_path=os.getenv("DB_PATH", Settings.db_path),
             onec_sync_interval_hours=float(
                 os.getenv("ONEC_SYNC_INTERVAL_HOURS", Settings.onec_sync_interval_hours)

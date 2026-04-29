@@ -9,7 +9,7 @@ import { PreviewWithZones } from "@/components/PreviewWithZones"
 import { ZonesPanel } from "@/components/ZonesPanel"
 import { EventsTable } from "@/components/EventsTable"
 import { OnboardingPanel } from "@/components/OnboardingPanel"
-import { deleteCamera, saveZones, saveCameraZones, toEventImageSrc } from "@/lib/api"
+import { deleteCamera, saveZones, saveCameraZones, toEventImageSrc, updateCamera } from "@/lib/api"
 import { useDashboard } from "@/hooks/use-dashboard"
 import type { Camera, DetectionZone } from "@/lib/types"
 
@@ -27,6 +27,7 @@ export default function Page() {
   const [cameraToDelete, setCameraToDelete] = useState<Camera | null>(null)
   const [cameraDeleteBusy, setCameraDeleteBusy] = useState(false)
   const [cameraDeleteError, setCameraDeleteError] = useState<string | null>(null)
+  const [cameraStateError, setCameraStateError] = useState<string | null>(null)
   const { data, preview, previewImageSrc, cameras, loading, error, refreshing, isStale, syncAgeSec, refresh, runForceSync } =
     useDashboard(selectedCameraId)
   const [selectedEventId, setSelectedEventId] = useState<number | null>(null)
@@ -62,6 +63,7 @@ export default function Page() {
   const selectedEvent = data?.recent_events.find((event) => event.id === selectedEventId) ?? null
   const selectedImageSrc = selectedEventId !== null ? toEventImageSrc(selectedEventId) : null
   const maxZones = preview?.max_zones ?? 2
+  const selectedCamera = cameras.find((camera) => camera.id === selectedCameraId) ?? null
 
   async function handleCameraSaved(camera: Camera) {
     setCameraFormMode(null)
@@ -86,6 +88,22 @@ export default function Page() {
   function handleOpenDeleteCamera(camera: Camera) {
     setCameraDeleteError(null)
     setCameraToDelete(camera)
+  }
+
+  async function handleToggleSelectedCameraActive(nextActive: boolean) {
+    const camera = cameras.find((item) => item.id === selectedCameraId)
+    if (!camera) {
+      return
+    }
+
+    setCameraStateError(null)
+
+    try {
+      await updateCamera(camera.id, { is_active: nextActive })
+      await refresh()
+    } catch (toggleError) {
+      setCameraStateError(toggleError instanceof Error ? toggleError.message : "Failed to update camera state")
+    }
   }
 
   async function handleConfirmDeleteCamera() {
@@ -211,6 +229,12 @@ export default function Page() {
           </section>
         )}
 
+        {cameraStateError && (
+          <section className="rounded-xl border border-amber-500/40 bg-amber-500/10 p-3 text-sm text-amber-200">
+            Camera update error: {cameraStateError}
+          </section>
+        )}
+
         {/* Row 2: Preview (left 2/3) + Zones Panel (right 1/3) */}
         <section className="grid grid-cols-1 gap-4 lg:grid-cols-[2fr_1fr]">
           {/* Left: Preview */}
@@ -223,6 +247,24 @@ export default function Page() {
                 setZonesDirty(true)
                 setZonesMessage(null)
               }}
+              headerAction={
+                selectedCamera ? (
+                  <button
+                    type="button"
+                    role="switch"
+                    aria-checked={selectedCamera.is_active}
+                    aria-label={selectedCamera.is_active ? `Deactivate ${selectedCamera.name}` : `Activate ${selectedCamera.name}`}
+                    onClick={() => void handleToggleSelectedCameraActive(!selectedCamera.is_active)}
+                    className={`inline-flex items-center gap-2 rounded-full border px-3 py-1 text-xs font-medium transition ${selectedCamera.is_active
+                      ? "border-emerald-500/40 bg-emerald-500/15 text-emerald-200 hover:bg-emerald-500/25"
+                      : "border-slate-600 bg-slate-800/80 text-slate-300 hover:bg-slate-700"
+                      }`}
+                  >
+                    <span className={`size-2 rounded-full ${selectedCamera.is_active ? "bg-emerald-400" : "bg-slate-500"}`} />
+                    {selectedCamera.is_active ? "Active" : "Inactive"}
+                  </button>
+                ) : null
+              }
             />
           </div>
 

@@ -1,5 +1,6 @@
 "use client"
 
+import type { ReactNode } from "react"
 import { useMemo, useRef, useState } from "react"
 import type { DetectionZone } from "@/lib/types"
 
@@ -7,6 +8,7 @@ type PreviewWithZonesProps = {
     imageSrc: string | null
     zones: DetectionZone[]
     onChangeZones: (zones: DetectionZone[]) => void
+    headerAction?: ReactNode
 }
 
 function zoneLabel(zone: DetectionZone, index: number): string {
@@ -41,6 +43,7 @@ export function PreviewWithZones({
     imageSrc,
     zones,
     onChangeZones,
+    headerAction,
 }: PreviewWithZonesProps) {
     const overlayRef = useRef<HTMLDivElement | null>(null)
     const [resizing, setResizing] = useState<ResizingZone | null>(null)
@@ -100,7 +103,10 @@ export function PreviewWithZones({
 
     return (
         <div className="space-y-3">
-            <p className="text-xs uppercase tracking-widest text-slate-400">Live Preview</p>
+            <div className="flex items-center justify-between gap-3">
+                <p className="text-xs uppercase tracking-widest text-slate-400">Live Preview</p>
+                {headerAction && <div className="shrink-0">{headerAction}</div>}
+            </div>
 
             {/* Preview Image with Zones Overlay */}
             <div className="overflow-hidden rounded-lg border border-slate-700/80 bg-slate-900/60">

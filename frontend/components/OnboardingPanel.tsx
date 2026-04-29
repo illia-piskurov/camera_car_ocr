@@ -19,7 +19,6 @@ type CameraFormValues = {
     username: string
     password: string
     auth_mode: string
-    is_active: boolean
     sort_order: string
 }
 
@@ -31,7 +30,6 @@ function buildInitialFormValues(mode: "create" | "edit", camera?: Camera | null)
             username: "",
             password: "",
             auth_mode: camera.auth_mode,
-            is_active: camera.is_active,
             sort_order: String(camera.sort_order),
         }
     }
@@ -42,7 +40,6 @@ function buildInitialFormValues(mode: "create" | "edit", camera?: Camera | null)
         username: "",
         password: "",
         auth_mode: "http_basic",
-        is_active: true,
         sort_order: "",
     }
 }
@@ -83,7 +80,6 @@ export function OnboardingPanel({ mode, camera, onCameraSaved, onCancel, isFirst
                 username: formData.username.trim(),
                 password: formData.password,
                 auth_mode: formData.auth_mode,
-                is_active: formData.is_active,
                 sort_order: buildSortOrder(formData.sort_order),
             }
             const result = await validateCamera(payload)
@@ -110,7 +106,6 @@ export function OnboardingPanel({ mode, camera, onCameraSaved, onCancel, isFirst
                 username: formData.username.trim(),
                 password: formData.password,
                 auth_mode: formData.auth_mode,
-                is_active: formData.is_active,
                 sort_order: buildSortOrder(formData.sort_order),
             }
             const result = await createCamera(nextPayload)
@@ -142,7 +137,6 @@ export function OnboardingPanel({ mode, camera, onCameraSaved, onCancel, isFirst
                 name,
                 snapshot_url: snapshotUrl,
                 auth_mode: formData.auth_mode,
-                is_active: formData.is_active,
                 sort_order: buildSortOrder(formData.sort_order),
             }
 
@@ -164,8 +158,6 @@ export function OnboardingPanel({ mode, camera, onCameraSaved, onCancel, isFirst
 
     const submitLabel = isCreateMode ? (validating ? "Validating..." : loading ? "Adding..." : "Add Camera") : loading ? "Saving..." : "Save Camera"
     const title = isCreateMode ? "Add Camera" : "Edit Camera"
-    const requiresCredentials = isCreateMode
-
     function handleBack() {
         if (onCancel && (!isCreateMode || !isFirstCameraFlow)) {
             onCancel()
@@ -299,16 +291,6 @@ export function OnboardingPanel({ mode, camera, onCameraSaved, onCancel, isFirst
                         </div>
 
                         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-                            <label className="flex items-center gap-2 rounded border border-slate-500 bg-slate-600 px-3 py-2 text-sm text-slate-200">
-                                <input
-                                    type="checkbox"
-                                    checked={formData.is_active}
-                                    onChange={(e) => setFormData({ ...formData, is_active: e.target.checked })}
-                                    className="size-4 rounded border-slate-400 bg-slate-700 text-blue-500 focus:ring-blue-500"
-                                />
-                                Active
-                            </label>
-
                             <div>
                                 <label className="block text-sm font-medium text-slate-300 mb-1">Sort Order</label>
                                 <input
@@ -344,7 +326,7 @@ export function OnboardingPanel({ mode, camera, onCameraSaved, onCancel, isFirst
                             disabled={
                                 !formData.name.trim() ||
                                 !formData.snapshot_url.trim() ||
-                                (requiresCredentials && (!formData.username.trim() || !formData.password.trim())) ||
+                                (isCreateMode && (!formData.username.trim() || !formData.password.trim())) ||
                                 loading ||
                                 validating
                             }

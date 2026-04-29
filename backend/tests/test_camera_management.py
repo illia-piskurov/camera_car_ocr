@@ -145,6 +145,32 @@ def test_update_camera_preserves_credentials_and_skips_validation(monkeypatch, t
     assert credentials == ("admin", "password", "http_basic")
 
 
+def test_update_camera_allows_blank_password_without_validation(monkeypatch, test_db, test_camera) -> None:
+    camera_id = test_camera["id"]
+
+    def fail_validation(*_args, **_kwargs):
+        raise AssertionError("validate_camera should not be called when password is omitted")
+
+    monkeypatch.setattr(api_server, "db", test_db)
+    monkeypatch.setattr(api_server, "cfg", SimpleNamespace(get_camera_credentials_encryption_key=lambda: "test-camera-encryption-key"))
+    monkeypatch.setattr(api_server, "validate_camera", fail_validation)
+
+    result = api_server.update_camera(
+        camera_id,
+        api_server.CameraUpdateInput(
+            name="Updated Gate",
+            snapshot_url="http://test.local/snapshot",
+            auth_mode="http_basic",
+            is_active=True,
+            sort_order=0,
+            password="",
+        ),
+    )
+
+    assert result["status"] == "ok"
+    assert result["camera"]["name"] == "Updated Gate"
+
+
 def test_update_camera_returns_404_for_missing_camera(monkeypatch, test_db) -> None:
     monkeypatch.setattr(api_server, "db", test_db)
     monkeypatch.setattr(api_server, "cfg", SimpleNamespace(get_camera_credentials_encryption_key=lambda: "test-camera-encryption-key"))

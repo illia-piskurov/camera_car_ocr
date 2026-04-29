@@ -13,10 +13,12 @@ from pydantic import BaseModel, Field
 from .camera import SnapshotCameraClient
 from .config import Settings
 from .db import Database, utc_now
+from .logging_utils import configure_logging
 from .onec_provider import create_whitelist_provider
 from .zones import sanitize_zone
 
 cfg = Settings.from_env()
+configure_logging(cfg.log_file_path)
 db = Database(cfg.db_path)
 db.init()
 provider = create_whitelist_provider(cfg)
@@ -165,10 +167,15 @@ def update_camera(camera_id: int, payload: CameraUpdateInput) -> dict[str, objec
 
     requires_validation = any(
         (
-            payload.snapshot_url is not None and payload.snapshot_url.strip(),
-            payload.username is not None and payload.username.strip(),
-            payload.password is not None and payload.password.strip(),
-            payload.auth_mode is not None and payload.auth_mode.strip(),
+            payload.snapshot_url is not None
+            and payload.snapshot_url.strip()
+            and payload.snapshot_url.strip() != str(existing_camera.get("snapshot_url") or ""),
+            payload.username is not None
+            and payload.username.strip()
+            and payload.username.strip() != current_username,
+            payload.password is not None
+            and payload.password.strip()
+            and payload.password.strip() != current_password,
         )
     )
     if requires_validation:

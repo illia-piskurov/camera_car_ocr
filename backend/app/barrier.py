@@ -122,13 +122,15 @@ class BarrierController:
                 with httpx.Client(timeout=self.timeout_sec, verify=self.verify_tls) as client:
                     response = client.post(url, headers=headers, json=payload)
                     response.raise_for_status()
+                    body = (response.text or "").strip()[:1000]
                 LOG.info(
-                    "Barrier %s executed entity_id=%s plate=%s reason=%s zone=%s",
+                    "Barrier %s executed entity_id=%s plate=%s reason=%s zone=%s response=%s",
                     action,
                     entity_id,
                     plate or "-",
                     reason,
                     zone_id if zone_id is not None else "full",
+                    body,
                 )
                 return True
             except httpx.HTTPStatusError as exc:
