@@ -15,3 +15,5 @@ backend/data/
 .env
 
 data/
+
+onec_whitelist_stub.txt
