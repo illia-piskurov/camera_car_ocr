@@ -22,7 +22,7 @@ type UseDashboardState = {
     isStale: boolean
 }
 
-const POLL_MS = 2500
+const POLL_MS = 1200
 const STALE_MS = 12000
 
 export function useDashboard(selectedCameraId?: number | null) {

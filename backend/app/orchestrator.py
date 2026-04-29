@@ -397,7 +397,12 @@ def _preview_stage(
         return
 
     now_ts = time.monotonic()
-    if now_ts - state.last_preview_write_ts < cfg.preview_write_interval_sec:
+    time_since_last = now_ts - state.last_preview_write_ts
+    
+    # Debug: log every preview check (debug level)
+    LOG.debug(f"Preview check: time_since_last={time_since_last:.2f}s, interval={cfg.preview_write_interval_sec}s, should_write={time_since_last >= cfg.preview_write_interval_sec}")
+    
+    if time_since_last < cfg.preview_write_interval_sec:
         return
 
     annotated = frame
@@ -421,11 +426,14 @@ def _preview_stage(
         cv2.LINE_AA,
     )
 
+    image_path = cfg.get_preview_image_path(camera_id)
+    meta_path = cfg.get_preview_meta_path(camera_id)
+    
     try:
         write_preview_artifacts(
             image=annotated,
-            image_path=cfg.get_preview_image_path(camera_id),
-            meta_path=cfg.get_preview_meta_path(camera_id),
+            image_path=image_path,
+            meta_path=meta_path,
             captured_at=stage.now,
             has_detections=bool(detections),
             last_plate=preview_plates[0] if preview_plates else None,
@@ -433,8 +441,9 @@ def _preview_stage(
             jpeg_quality=cfg.preview_jpeg_quality,
         )
         state.last_preview_write_ts = now_ts
+        LOG.info(f"Preview written: {image_path} (interval={time_since_last:.2f}s, config={cfg.preview_write_interval_sec}s)")
     except OSError as exc:
-        LOG.warning("Failed to save preview artifacts: %s", exc)
+        LOG.error(f"Failed to save preview artifacts to {image_path}: {exc}")
 
 
 def _poll_single_camera(

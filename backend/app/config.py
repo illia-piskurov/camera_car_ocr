@@ -90,7 +90,7 @@ class Settings:
     enable_fuzzy_match: bool = False
 
     preview_enabled: bool = True
-    preview_write_interval_sec: float = 3.0
+    preview_write_interval_sec: float = 1.0
     preview_jpeg_quality: int = 85
     preview_image_path: str = "data/preview_latest.jpg"
     preview_meta_path: str = "data/preview_meta.json"

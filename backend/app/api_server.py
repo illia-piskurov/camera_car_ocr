@@ -7,7 +7,7 @@ from datetime import timedelta
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel, Field
 
 from .camera import SnapshotCameraClient
@@ -423,7 +423,7 @@ def camera_preview_meta(camera_id: int) -> dict[str, object]:
 
 
 @app.get("/api/cameras/{camera_id}/preview/image")
-def camera_preview_image(camera_id: int) -> FileResponse:
+def camera_preview_image(camera_id: int) -> StreamingResponse:
     """Get preview image for a specific camera."""
     # Verify camera exists
     camera = db.get_camera(camera_id)
@@ -434,8 +434,19 @@ def camera_preview_image(camera_id: int) -> FileResponse:
     if not os.path.exists(image_path):
         raise HTTPException(status_code=404, detail="Preview image not available yet")
 
-    return FileResponse(
-        image_path,
+    try:
+        # Read entire file into memory to avoid race conditions when file is being written
+        with open(image_path, "rb") as f:
+            image_data = f.read()
+    except OSError as exc:
+        raise HTTPException(status_code=404, detail=f"Failed to read preview image: {exc}")
+
+    # Return as streaming response with explicit content-length to avoid h11 protocol errors
+    return StreamingResponse(
+        iter([image_data]),
         media_type="image/jpeg",
-        headers={"Cache-Control": "no-store, no-cache, must-revalidate, max-age=0"},
+        headers={
+            "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
+            "Content-Length": str(len(image_data)),
+        },
     )
