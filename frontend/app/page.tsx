@@ -4,11 +4,12 @@ import { useEffect, useState } from "react"
 
 import { Button } from "@/components/ui/button"
 import { ControlRoomHeader } from "@/components/ControlRoomHeader"
+import { ConfirmationDialog } from "@/components/ConfirmationDialog"
 import { PreviewWithZones } from "@/components/PreviewWithZones"
 import { ZonesPanel } from "@/components/ZonesPanel"
 import { EventsTable } from "@/components/EventsTable"
 import { OnboardingPanel } from "@/components/OnboardingPanel"
-import { saveZones, saveCameraZones, toEventImageSrc } from "@/lib/api"
+import { deleteCamera, saveZones, saveCameraZones, toEventImageSrc } from "@/lib/api"
 import { useDashboard } from "@/hooks/use-dashboard"
 import type { Camera, DetectionZone } from "@/lib/types"
 
@@ -21,7 +22,11 @@ function formatTime(value: string | null | undefined) {
 
 export default function Page() {
   const [selectedCameraId, setSelectedCameraId] = useState<number | null>(null)
-  const [isAddingCamera, setIsAddingCamera] = useState(false)
+  const [cameraFormMode, setCameraFormMode] = useState<"create" | "edit" | null>(null)
+  const [cameraFormCamera, setCameraFormCamera] = useState<Camera | null>(null)
+  const [cameraToDelete, setCameraToDelete] = useState<Camera | null>(null)
+  const [cameraDeleteBusy, setCameraDeleteBusy] = useState(false)
+  const [cameraDeleteError, setCameraDeleteError] = useState<string | null>(null)
   const { data, preview, previewImageSrc, cameras, loading, error, refreshing, isStale, syncAgeSec, refresh, runForceSync } =
     useDashboard(selectedCameraId)
   const [selectedEventId, setSelectedEventId] = useState<number | null>(null)
@@ -40,6 +45,15 @@ export default function Page() {
   }, [cameras, selectedCameraId])
 
   useEffect(() => {
+    if (cameraFormMode === "edit" && cameraFormCamera) {
+      const nextCamera = cameras.find((camera) => camera.id === cameraFormCamera.id) ?? null
+      if (nextCamera && nextCamera !== cameraFormCamera) {
+        setCameraFormCamera(nextCamera)
+      }
+    }
+  }, [cameraFormCamera, cameraFormMode, cameras])
+
+  useEffect(() => {
     if (!zonesDirty && preview?.zones) {
       setZoneDraft(preview.zones)
     }
@@ -49,23 +63,75 @@ export default function Page() {
   const selectedImageSrc = selectedEventId !== null ? toEventImageSrc(selectedEventId) : null
   const maxZones = preview?.max_zones ?? 2
 
-  // Show onboarding if no cameras or when user explicitly opens add camera flow.
-  if ((!loading && cameras.length === 0) || isAddingCamera) {
+  async function handleCameraSaved(camera: Camera) {
+    setCameraFormMode(null)
+    setCameraFormCamera(null)
+    setSelectedCameraId(camera.id)
+    if (selectedCameraId === camera.id) {
+      await refresh()
+    }
+  }
+
+  function handleOpenCreateCamera() {
+    setCameraFormCamera(null)
+    setCameraFormMode("create")
+  }
+
+  function handleOpenEditCamera(camera: Camera) {
+    setSelectedCameraId(camera.id)
+    setCameraFormCamera(camera)
+    setCameraFormMode("edit")
+  }
+
+  function handleOpenDeleteCamera(camera: Camera) {
+    setCameraDeleteError(null)
+    setCameraToDelete(camera)
+  }
+
+  async function handleConfirmDeleteCamera() {
+    if (!cameraToDelete) {
+      return
+    }
+
+    setCameraDeleteBusy(true)
+    setCameraDeleteError(null)
+
+    const deletedCameraId = cameraToDelete.id
+    const remainingCameras = cameras.filter((camera) => camera.id !== deletedCameraId)
+    const fallbackCamera = remainingCameras.find((camera) => camera.is_active) ?? remainingCameras[0] ?? null
+
+    try {
+      await deleteCamera(deletedCameraId)
+      setCameraToDelete(null)
+      setCameraFormMode(null)
+      setCameraFormCamera(null)
+      if (selectedCameraId === deletedCameraId) {
+        setSelectedCameraId(fallbackCamera?.id ?? null)
+      } else {
+        await refresh()
+      }
+    } catch (deleteError) {
+      setCameraDeleteError(deleteError instanceof Error ? deleteError.message : "Failed to delete camera")
+    } finally {
+      setCameraDeleteBusy(false)
+    }
+  }
+
+  // Show onboarding if no cameras or when user explicitly opens add/edit camera flow.
+  if ((!loading && cameras.length === 0) || cameraFormMode !== null) {
+    const formMode = cameraFormMode ?? "create"
     return (
       <OnboardingPanel
-        onCameraAdded={(camera) => {
-          setIsAddingCamera(false)
-          setSelectedCameraId(camera.id)
-          void refresh()
+        mode={formMode}
+        camera={cameraFormCamera}
+        onCameraSaved={(camera) => {
+          void handleCameraSaved(camera)
         }}
-        isFirstCameraFlow={cameras.length === 0}
-        onCancel={
-          cameras.length > 0
-            ? () => {
-              setIsAddingCamera(false)
-            }
-            : undefined
-        }
+        isFirstCameraFlow={cameras.length === 0 && formMode === "create"}
+        onCancel={cameras.length > 0 ? () => {
+          setCameraFormMode(null)
+          setCameraFormCamera(null)
+        } : undefined}
       />
     )
   }
@@ -121,7 +187,9 @@ export default function Page() {
         cameras={cameras}
         selectedCameraId={selectedCameraId}
         onSelectCamera={setSelectedCameraId}
-        onAddCamera={() => setIsAddingCamera(true)}
+        onAddCamera={handleOpenCreateCamera}
+        onEditCamera={handleOpenEditCamera}
+        onDeleteCamera={handleOpenDeleteCamera}
         syncAgeSec={syncAgeSec}
         onRefresh={() => void refresh()}
         onForceSync={() => void runForceSync()}
@@ -228,6 +296,20 @@ export default function Page() {
           </div>
         </div>
       )}
+
+      <ConfirmationDialog
+        open={cameraToDelete !== null}
+        title={cameraToDelete ? `Delete ${cameraToDelete.name}?` : "Delete camera?"}
+        description={cameraToDelete ? "This will permanently remove the camera, its zones, and its recognition events." : "This action cannot be undone."}
+        confirmLabel="Delete camera"
+        busy={cameraDeleteBusy}
+        error={cameraDeleteError}
+        onConfirm={() => void handleConfirmDeleteCamera()}
+        onCancel={() => {
+          setCameraToDelete(null)
+          setCameraDeleteError(null)
+        }}
+      />
     </main>
   )
 }

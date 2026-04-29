@@ -1,7 +1,7 @@
 "use client"
 
 import { useEffect, useMemo, useRef, useState } from "react"
-import { Camera, ChevronDown, Plus, RefreshCw, Zap } from "lucide-react"
+import { Camera, ChevronDown, PencilLine, Plus, RefreshCw, Trash2, Zap } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import type { Camera as CameraModel } from "@/lib/types"
 
@@ -10,6 +10,8 @@ type ControlRoomHeaderProps = {
     selectedCameraId: number | null
     onSelectCamera: (cameraId: number) => void
     onAddCamera: () => void
+    onEditCamera: (camera: CameraModel) => void
+    onDeleteCamera: (camera: CameraModel) => void
     syncAgeSec: number | null
     onRefresh: () => void
     onForceSync: () => void
@@ -39,6 +41,8 @@ export function ControlRoomHeader({
     selectedCameraId,
     onSelectCamera,
     onAddCamera,
+    onEditCamera,
+    onDeleteCamera,
     syncAgeSec,
     onRefresh,
     onForceSync,
@@ -183,24 +187,60 @@ export function ControlRoomHeader({
                                 <ul className="max-h-[45vh] overflow-y-auto p-1 sm:max-h-64">
                                     {cameras.map((camera, index) => (
                                         <li key={camera.id}>
-                                            <button
-                                                type="button"
-                                                onClick={() => {
-                                                    onSelectCamera(camera.id)
-                                                    setIsCameraMenuOpen(false)
-                                                }}
-                                                onMouseEnter={() => setHighlightedIndex(index)}
-                                                onFocus={() => setHighlightedIndex(index)}
-                                                className={`flex w-full items-center justify-between rounded-lg px-3 py-2 text-sm transition ${selectedCamera?.id === camera.id
+                                            <div
+                                                className={`flex items-center gap-2 rounded-lg px-2 py-1.5 text-sm transition ${selectedCamera?.id === camera.id
                                                     ? "bg-blue-500/20 text-blue-200"
                                                     : highlightedIndex === index
                                                         ? "bg-slate-700/80 text-slate-100"
                                                         : "text-slate-200 hover:bg-slate-700/70"
                                                     }`}
+                                                onMouseEnter={() => setHighlightedIndex(index)}
                                             >
-                                                <span className="truncate">{camera.name}</span>
-                                                {camera.is_active && <span className="text-[11px] uppercase tracking-wide text-slate-400">active</span>}
-                                            </button>
+                                                <button
+                                                    type="button"
+                                                    onClick={() => {
+                                                        onSelectCamera(camera.id)
+                                                        setIsCameraMenuOpen(false)
+                                                    }}
+                                                    onFocus={() => setHighlightedIndex(index)}
+                                                    className="min-w-0 flex-1 rounded-md px-1 py-1 text-left"
+                                                >
+                                                    <div className="flex items-center justify-between gap-2">
+                                                        <span className="truncate">{camera.name}</span>
+                                                        {camera.is_active && <span className="text-[11px] uppercase tracking-wide text-slate-400">active</span>}
+                                                    </div>
+                                                </button>
+
+                                                <div className="flex items-center gap-1">
+                                                    <Button
+                                                        type="button"
+                                                        size="icon-sm"
+                                                        variant="outline"
+                                                        className="border-amber-500/40 bg-amber-500/10 text-amber-200 hover:bg-amber-500/20 hover:text-amber-100"
+                                                        aria-label={`Edit ${camera.name}`}
+                                                        title="Edit camera"
+                                                        onClick={() => {
+                                                            setIsCameraMenuOpen(false)
+                                                            onEditCamera(camera)
+                                                        }}
+                                                    >
+                                                        <PencilLine className="size-4" />
+                                                    </Button>
+                                                    <Button
+                                                        type="button"
+                                                        size="icon-sm"
+                                                        variant="destructive"
+                                                        aria-label={`Delete ${camera.name}`}
+                                                        title="Delete camera"
+                                                        onClick={() => {
+                                                            setIsCameraMenuOpen(false)
+                                                            onDeleteCamera(camera)
+                                                        }}
+                                                    >
+                                                        <Trash2 className="size-4" />
+                                                    </Button>
+                                                </div>
+                                            </div>
                                         </li>
                                     ))}
                                 </ul>

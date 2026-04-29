@@ -16,6 +16,18 @@ export type CameraCreatePayload = {
     username: string
     password: string
     auth_mode: string
+    is_active?: boolean
+    sort_order?: number | null
+}
+
+export type CameraUpdatePayload = {
+    name?: string
+    snapshot_url?: string
+    username?: string
+    password?: string
+    auth_mode?: string
+    is_active?: boolean
+    sort_order?: number | null
 }
 
 export type DetectionZone = {

@@ -219,3 +219,53 @@ def test_global_and_camera_zones_are_independent(test_db, test_config) -> None:
     assert all_global[0]["name"] == "Global Zone"
     assert len(all_camera) == 1
     assert all_camera[0]["name"] == "Camera Zone"
+
+
+def test_delete_camera_removes_camera_scoped_rows(monkeypatch, test_db, test_config) -> None:
+    camera = test_db.create_camera(
+        name="Camera to delete",
+        snapshot_url="http://test.local/snapshot",
+        username="admin",
+        password="password",
+        auth_mode="http_basic",
+        encryption_key="test-camera-encryption-key",
+    )
+    camera_id = camera["id"]
+
+    test_db.replace_zones(
+        [
+            {
+                "name": "Delete Zone",
+                "x_min": 0.0,
+                "y_min": 0.0,
+                "x_max": 1.0,
+                "y_max": 1.0,
+                "is_enabled": True,
+                "sort_order": 0,
+            }
+        ],
+        camera_id=camera_id,
+        max_zones=2,
+    )
+    test_db.record_event(
+        occurred_at=datetime.now(timezone.utc),
+        frame_id="frame-delete",
+        raw_plate="ABC123",
+        plate="ABC123",
+        fuzzy_plate="ABC123",
+        detection_confidence=0.95,
+        ocr_confidence=0.95,
+        decision="deny",
+        reason_code="deny_test",
+        camera_id=camera_id,
+    )
+
+    monkeypatch.setattr(api_server, "db", test_db)
+    monkeypatch.setattr(api_server, "cfg", test_config)
+
+    result = api_server.delete_camera(camera_id)
+
+    assert result["status"] == "ok"
+    assert test_db.get_camera(camera_id) is None
+    assert test_db.get_zones(include_disabled=True, camera_id=camera_id) == []
+    assert test_db.get_recent_events(camera_id=camera_id) == []

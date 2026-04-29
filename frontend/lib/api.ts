@@ -1,6 +1,7 @@
 import type {
     Camera,
     CameraCreatePayload,
+    CameraUpdatePayload,
     ForceSyncResult,
     PreviewData,
     SaveZonesResponse,
@@ -59,6 +60,38 @@ export async function createCamera(payload: CameraCreatePayload): Promise<{ stat
     }
 
     return (await response.json()) as { status: string; camera: Camera }
+}
+
+export async function updateCamera(cameraId: number, payload: CameraUpdatePayload): Promise<{ status: string; camera: Camera }> {
+    const response = await fetch(`${API_BASE}/api/cameras/${cameraId}`, {
+        method: "PUT",
+        cache: "no-store",
+        headers: {
+            "Content-Type": "application/json",
+        },
+        body: JSON.stringify(payload),
+    })
+
+    if (!response.ok) {
+        const errorText = await response.text()
+        throw new Error(`Update camera failed: ${errorText}`)
+    }
+
+    return (await response.json()) as { status: string; camera: Camera }
+}
+
+export async function deleteCamera(cameraId: number): Promise<{ status: string }> {
+    const response = await fetch(`${API_BASE}/api/cameras/${cameraId}`, {
+        method: "DELETE",
+        cache: "no-store",
+    })
+
+    if (!response.ok) {
+        const errorText = await response.text()
+        throw new Error(`Delete camera failed: ${errorText}`)
+    }
+
+    return (await response.json()) as { status: string }
 }
 
 export async function fetchCameraDashboard(cameraId: number, signal?: AbortSignal): Promise<import("@/lib/types").DashboardData> {

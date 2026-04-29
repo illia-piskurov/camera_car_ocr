@@ -3,7 +3,7 @@ from __future__ import annotations
 import os
 from datetime import datetime, timedelta, timezone
 
-from sqlalchemy import Boolean, DateTime, Float, Integer, String, create_engine, event, func, select
+from sqlalchemy import Boolean, DateTime, Float, Integer, String, create_engine, event, func, select, text
 from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column, sessionmaker
 
 from .security import decrypt_text, encrypt_text
@@ -181,6 +181,56 @@ class Database:
             session.commit()
             session.refresh(camera)
             return self._camera_row(camera)
+
+    def update_camera(
+        self,
+        camera_id: int,
+        *,
+        name: str | None = None,
+        snapshot_url: str | None = None,
+        username: str | None = None,
+        password: str | None = None,
+        auth_mode: str | None = None,
+        encryption_key: str,
+        is_active: bool | None = None,
+        sort_order: int | None = None,
+    ) -> dict[str, object] | None:
+        with self.SessionLocal() as session:
+            row = session.get(Camera, camera_id)
+            if row is None:
+                return None
+
+            if name is not None and name.strip():
+                row.name = name.strip()
+            if snapshot_url is not None and snapshot_url.strip():
+                row.snapshot_url = snapshot_url.strip()
+            if username is not None and username.strip():
+                row.username_encrypted = encrypt_text(username, encryption_key)
+            if password is not None and password.strip():
+                row.password_encrypted = encrypt_text(password, encryption_key)
+            if auth_mode is not None and auth_mode.strip():
+                row.auth_mode = auth_mode.strip()
+            if is_active is not None:
+                row.is_active = is_active
+            if sort_order is not None:
+                row.sort_order = sort_order
+
+            row.updated_at = utc_now()
+            session.commit()
+            session.refresh(row)
+            return self._camera_row(row)
+
+    def delete_camera(self, camera_id: int) -> bool:
+        with self.SessionLocal() as session:
+            row = session.get(Camera, camera_id)
+            if row is None:
+                return False
+
+            session.query(DetectionZone).filter(DetectionZone.camera_id == camera_id).delete(synchronize_session=False)
+            session.query(RecognitionEvent).filter(RecognitionEvent.camera_id == camera_id).delete(synchronize_session=False)
+            session.delete(row)
+            session.commit()
+            return True
 
     def get_camera_credentials(self, camera_id: int, encryption_key: str) -> tuple[str, str, str] | None:
         with self.SessionLocal() as session:

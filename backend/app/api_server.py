@@ -59,6 +59,16 @@ class CameraInput(BaseModel):
     sort_order: int | None = None
 
 
+class CameraUpdateInput(BaseModel):
+    name: str | None = Field(default=None, max_length=128)
+    snapshot_url: str | None = Field(default=None, max_length=512)
+    username: str | None = None
+    password: str | None = None
+    auth_mode: str | None = Field(default=None, max_length=32)
+    is_active: bool | None = None
+    sort_order: int | None = None
+
+
 def _read_preview_meta(meta_path: str) -> dict[str, object]:
     if not os.path.exists(meta_path):
         return {}
@@ -132,6 +142,76 @@ def create_camera(payload: CameraInput) -> dict[str, object]:
         sort_order=payload.sort_order,
     )
     return {"status": "ok", "camera": camera}
+
+
+@app.put("/api/cameras/{camera_id}")
+def update_camera(camera_id: int, payload: CameraUpdateInput) -> dict[str, object]:
+    existing_camera = db.get_camera(camera_id)
+    if existing_camera is None:
+        raise HTTPException(status_code=404, detail=f"Camera {camera_id} not found")
+
+    current_credentials = db.get_camera_credentials(camera_id, cfg.get_camera_credentials_encryption_key())
+    current_username, current_password, current_auth_mode = current_credentials if current_credentials is not None else ("", "", "digest")
+
+    merged_name = payload.name.strip() if payload.name is not None and payload.name.strip() else str(existing_camera.get("name") or "")
+    merged_snapshot_url = (
+        payload.snapshot_url.strip() if payload.snapshot_url is not None and payload.snapshot_url.strip() else str(existing_camera.get("snapshot_url") or "")
+    )
+    merged_username = payload.username.strip() if payload.username is not None and payload.username.strip() else current_username
+    merged_password = payload.password.strip() if payload.password is not None and payload.password.strip() else current_password
+    merged_auth_mode = payload.auth_mode.strip() if payload.auth_mode is not None and payload.auth_mode.strip() else str(existing_camera.get("auth_mode") or current_auth_mode or "digest")
+    merged_is_active = payload.is_active if payload.is_active is not None else bool(existing_camera.get("is_active", True))
+    merged_sort_order = payload.sort_order if payload.sort_order is not None else int(existing_camera.get("sort_order") or 0)
+
+    requires_validation = any(
+        (
+            payload.snapshot_url is not None and payload.snapshot_url.strip(),
+            payload.username is not None and payload.username.strip(),
+            payload.password is not None and payload.password.strip(),
+            payload.auth_mode is not None and payload.auth_mode.strip(),
+        )
+    )
+    if requires_validation:
+        validation = validate_camera(
+            CameraInput(
+                name=merged_name,
+                snapshot_url=merged_snapshot_url,
+                username=merged_username,
+                password=merged_password,
+                auth_mode=merged_auth_mode,
+                is_active=merged_is_active,
+                sort_order=merged_sort_order,
+            )
+        )
+        if validation.get("status") != "ok":
+            raise HTTPException(status_code=400, detail="Camera validation failed")
+
+    camera = db.update_camera(
+        camera_id,
+        name=payload.name,
+        snapshot_url=payload.snapshot_url,
+        username=payload.username,
+        password=payload.password,
+        auth_mode=payload.auth_mode,
+        encryption_key=cfg.get_camera_credentials_encryption_key(),
+        is_active=payload.is_active,
+        sort_order=payload.sort_order,
+    )
+    if camera is None:
+        raise HTTPException(status_code=404, detail=f"Camera {camera_id} not found")
+    return {"status": "ok", "camera": camera}
+
+
+@app.delete("/api/cameras/{camera_id}")
+def delete_camera(camera_id: int) -> dict[str, object]:
+    existing_camera = db.get_camera(camera_id)
+    if existing_camera is None:
+        raise HTTPException(status_code=404, detail=f"Camera {camera_id} not found")
+
+    deleted = db.delete_camera(camera_id)
+    if not deleted:
+        raise HTTPException(status_code=404, detail=f"Camera {camera_id} not found")
+    return {"status": "ok"}
 
 
 @app.get("/api/zones")

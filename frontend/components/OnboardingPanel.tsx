@@ -1,42 +1,97 @@
 "use client"
 
-import { useState } from "react"
+import { useEffect, useState } from "react"
 import { Button } from "@/components/ui/button"
-import { createCamera, validateCamera } from "@/lib/api"
-import type { Camera, CameraCreatePayload } from "@/lib/types"
+import { createCamera, updateCamera, validateCamera } from "@/lib/api"
+import type { Camera, CameraCreatePayload, CameraUpdatePayload } from "@/lib/types"
 
 interface OnboardingPanelProps {
-    onCameraAdded: (camera: Camera) => void
+    mode: "create" | "edit"
+    camera?: Camera | null
+    onCameraSaved: (camera: Camera) => void
     onCancel?: () => void
     isFirstCameraFlow?: boolean
 }
 
-export function OnboardingPanel({ onCameraAdded, onCancel, isFirstCameraFlow = true }: OnboardingPanelProps) {
-    const [step, setStep] = useState<"welcome" | "form">(isFirstCameraFlow ? "welcome" : "form")
-    const [loading, setLoading] = useState(false)
-    const [error, setError] = useState<string | null>(null)
-    const [validating, setValidating] = useState(false)
+type CameraFormValues = {
+    name: string
+    snapshot_url: string
+    username: string
+    password: string
+    auth_mode: string
+    is_active: boolean
+    sort_order: string
+}
 
-    const [formData, setFormData] = useState<CameraCreatePayload>({
+function buildInitialFormValues(mode: "create" | "edit", camera?: Camera | null): CameraFormValues {
+    if (mode === "edit" && camera) {
+        return {
+            name: camera.name,
+            snapshot_url: camera.snapshot_url,
+            username: "",
+            password: "",
+            auth_mode: camera.auth_mode,
+            is_active: camera.is_active,
+            sort_order: String(camera.sort_order),
+        }
+    }
+
+    return {
         name: "",
         snapshot_url: "",
         username: "",
         password: "",
         auth_mode: "http_basic",
-    })
+        is_active: true,
+        sort_order: "",
+    }
+}
+
+function buildSortOrder(value: string): number | undefined {
+    const trimmed = value.trim()
+    if (!trimmed) {
+        return undefined
+    }
+
+    const parsed = Number(trimmed)
+    return Number.isFinite(parsed) ? parsed : undefined
+}
+
+export function OnboardingPanel({ mode, camera, onCameraSaved, onCancel, isFirstCameraFlow = true }: OnboardingPanelProps) {
+    const isCreateMode = mode === "create"
+    const [step, setStep] = useState<"welcome" | "form">(isFirstCameraFlow && isCreateMode ? "welcome" : "form")
+    const [loading, setLoading] = useState(false)
+    const [error, setError] = useState<string | null>(null)
+    const [validating, setValidating] = useState(false)
+
+    const [formData, setFormData] = useState<CameraFormValues>(() => buildInitialFormValues(mode, camera))
+
+    useEffect(() => {
+        setStep(isFirstCameraFlow && isCreateMode ? "welcome" : "form")
+        setError(null)
+        setFormData(buildInitialFormValues(mode, camera))
+    }, [camera?.id, isCreateMode, isFirstCameraFlow, mode])
 
     async function handleValidate() {
         setValidating(true)
         setError(null)
 
         try {
-            const result = await validateCamera(formData)
+            const payload: CameraCreatePayload = {
+                name: formData.name.trim(),
+                snapshot_url: formData.snapshot_url.trim(),
+                username: formData.username.trim(),
+                password: formData.password,
+                auth_mode: formData.auth_mode,
+                is_active: formData.is_active,
+                sort_order: buildSortOrder(formData.sort_order),
+            }
+            const result = await validateCamera(payload)
             if (!result.available) {
                 setError("Camera is not accessible. Please check the URL, username, and password.")
                 return
             }
-            // If validation passed, proceed to create
-            handleCreate()
+            await handleCreate(payload)
         } catch (err) {
             setError(err instanceof Error ? err.message : "Validation failed")
         } finally {
@@ -44,17 +99,82 @@ export function OnboardingPanel({ onCameraAdded, onCancel, isFirstCameraFlow = t
         }
     }
 
-    async function handleCreate() {
+    async function handleCreate(payload?: CameraCreatePayload) {
         setLoading(true)
         setError(null)
 
         try {
-            const result = await createCamera(formData)
-            onCameraAdded(result.camera)
+            const nextPayload = payload ?? {
+                name: formData.name.trim(),
+                snapshot_url: formData.snapshot_url.trim(),
+                username: formData.username.trim(),
+                password: formData.password,
+                auth_mode: formData.auth_mode,
+                is_active: formData.is_active,
+                sort_order: buildSortOrder(formData.sort_order),
+            }
+            const result = await createCamera(nextPayload)
+            onCameraSaved(result.camera)
         } catch (err) {
             setError(err instanceof Error ? err.message : "Failed to create camera")
         } finally {
             setLoading(false)
+        }
+    }
+
+    async function handleSave() {
+        if (!camera) {
+            return
+        }
+
+        const name = formData.name.trim()
+        const snapshotUrl = formData.snapshot_url.trim()
+        if (!name || !snapshotUrl) {
+            setError("Camera name and snapshot URL are required")
+            return
+        }
+
+        setLoading(true)
+        setError(null)
+
+        try {
+            const payload: CameraUpdatePayload = {
+                name,
+                snapshot_url: snapshotUrl,
+                auth_mode: formData.auth_mode,
+                is_active: formData.is_active,
+                sort_order: buildSortOrder(formData.sort_order),
+            }
+
+            if (formData.username.trim()) {
+                payload.username = formData.username.trim()
+            }
+            if (formData.password.trim()) {
+                payload.password = formData.password
+            }
+
+            const result = await updateCamera(camera.id, payload)
+            onCameraSaved(result.camera)
+        } catch (err) {
+            setError(err instanceof Error ? err.message : "Failed to update camera")
+        } finally {
+            setLoading(false)
+        }
+    }
+
+    const submitLabel = isCreateMode ? (validating ? "Validating..." : loading ? "Adding..." : "Add Camera") : loading ? "Saving..." : "Save Camera"
+    const title = isCreateMode ? "Add Camera" : "Edit Camera"
+    const requiresCredentials = isCreateMode
+
+    function handleBack() {
+        if (onCancel && (!isCreateMode || !isFirstCameraFlow)) {
+            onCancel()
+            return
+        }
+
+        if (isCreateMode && isFirstCameraFlow) {
+            setStep("welcome")
+            setError(null)
         }
     }
 
@@ -100,30 +220,18 @@ export function OnboardingPanel({ onCameraAdded, onCancel, isFirstCameraFlow = t
             <div className="max-w-md w-full">
                 <div className="mb-8">
                     <button
-                        onClick={() => {
-                            if (!isFirstCameraFlow && onCancel) {
-                                onCancel()
-                                return
-                            }
-
-                            setStep("welcome")
-                            setError(null)
-                            setFormData({
-                                name: "",
-                                snapshot_url: "",
-                                username: "",
-                                password: "",
-                                auth_mode: "http_basic",
-                            })
-                        }}
+                        onClick={handleBack}
                         className="text-blue-400 hover:text-blue-300 text-sm font-medium"
                     >
-                        {isFirstCameraFlow ? "← Back" : "← Back to Dashboard"}
+                        {isCreateMode && isFirstCameraFlow ? "← Back" : "← Back to Dashboard"}
                     </button>
                 </div>
 
                 <div className="bg-slate-700 rounded-lg p-8 shadow-xl">
-                    <h2 className="text-2xl font-semibold text-white mb-6">Add Camera</h2>
+                    <h2 className="text-2xl font-semibold text-white mb-2">{title}</h2>
+                    <p className="mb-6 text-sm text-slate-300">
+                        {isCreateMode ? "Add a new camera to the control room." : "Update camera details without re-entering preserved credentials."}
+                    </p>
 
                     {error && (
                         <div className="mb-4 p-3 bg-red-900/50 border border-red-500 rounded text-red-200 text-sm">
@@ -158,7 +266,7 @@ export function OnboardingPanel({ onCameraAdded, onCancel, isFirstCameraFlow = t
                             <label className="block text-sm font-medium text-slate-300 mb-1">Username</label>
                             <input
                                 type="text"
-                                placeholder="admin"
+                                placeholder={isCreateMode ? "admin" : "Leave blank to keep current username"}
                                 value={formData.username}
                                 onChange={(e) => setFormData({ ...formData, username: e.target.value })}
                                 className="w-full px-3 py-2 bg-slate-600 text-white placeholder-slate-400 rounded border border-slate-500 focus:border-blue-500 focus:outline-none"
@@ -169,11 +277,12 @@ export function OnboardingPanel({ onCameraAdded, onCancel, isFirstCameraFlow = t
                             <label className="block text-sm font-medium text-slate-300 mb-1">Password</label>
                             <input
                                 type="password"
-                                placeholder="••••••••"
+                                placeholder={isCreateMode ? "••••••••" : "Leave blank to keep current password"}
                                 value={formData.password}
                                 onChange={(e) => setFormData({ ...formData, password: e.target.value })}
                                 className="w-full px-3 py-2 bg-slate-600 text-white placeholder-slate-400 rounded border border-slate-500 focus:border-blue-500 focus:outline-none"
                             />
+                            {!isCreateMode && <p className="mt-1 text-xs text-slate-400">Leave blank to keep the current password.</p>}
                         </div>
 
                         <div>
@@ -188,12 +297,37 @@ export function OnboardingPanel({ onCameraAdded, onCancel, isFirstCameraFlow = t
                                 <option value="none">None</option>
                             </select>
                         </div>
+
+                        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                            <label className="flex items-center gap-2 rounded border border-slate-500 bg-slate-600 px-3 py-2 text-sm text-slate-200">
+                                <input
+                                    type="checkbox"
+                                    checked={formData.is_active}
+                                    onChange={(e) => setFormData({ ...formData, is_active: e.target.checked })}
+                                    className="size-4 rounded border-slate-400 bg-slate-700 text-blue-500 focus:ring-blue-500"
+                                />
+                                Active
+                            </label>
+
+                            <div>
+                                <label className="block text-sm font-medium text-slate-300 mb-1">Sort Order</label>
+                                <input
+                                    type="number"
+                                    min="0"
+                                    step="1"
+                                    placeholder="Auto"
+                                    value={formData.sort_order}
+                                    onChange={(e) => setFormData({ ...formData, sort_order: e.target.value })}
+                                    className="w-full px-3 py-2 bg-slate-600 text-white placeholder-slate-400 rounded border border-slate-500 focus:border-blue-500 focus:outline-none"
+                                />
+                            </div>
+                        </div>
                     </div>
 
                     <div className="flex gap-3 mt-6">
                         <Button
                             onClick={() => {
-                                if (onCancel) {
+                                if (onCancel && (!isCreateMode || !isFirstCameraFlow)) {
                                     onCancel()
                                 } else {
                                     setStep("welcome")
@@ -206,18 +340,17 @@ export function OnboardingPanel({ onCameraAdded, onCancel, isFirstCameraFlow = t
                             Cancel
                         </Button>
                         <Button
-                            onClick={handleValidate}
+                            onClick={isCreateMode ? handleValidate : handleSave}
                             disabled={
-                                !formData.name ||
-                                !formData.snapshot_url ||
-                                !formData.username ||
-                                !formData.password ||
+                                !formData.name.trim() ||
+                                !formData.snapshot_url.trim() ||
+                                (requiresCredentials && (!formData.username.trim() || !formData.password.trim())) ||
                                 loading ||
                                 validating
                             }
                             className="flex-1 bg-blue-600 hover:bg-blue-700 text-white"
                         >
-                            {validating ? "Validating..." : loading ? "Adding..." : "Add Camera"}
+                            {submitLabel}
                         </Button>
                     </div>
                 </div>
