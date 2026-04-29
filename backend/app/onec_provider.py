@@ -102,6 +102,8 @@ class HttpWhitelistProvider(WhitelistProvider):
                 continue
 
             values.append((norm.normalized, norm.fuzzy))
+            test_norm = normalize_plate(TEST_PLATE)
+            values.append((test_norm.normalized, test_norm.fuzzy))
 
         return list(dict.fromkeys(values))
 

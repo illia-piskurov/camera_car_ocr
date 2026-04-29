@@ -16,6 +16,7 @@ from .barrier import BarrierController
 from .camera import SnapshotCameraClient
 from .config import Settings
 from .db import Database
+from .logging_utils import configure_logging
 from .motion_detector import has_motion_in_zone
 from .onec_provider import WhitelistProvider, create_whitelist_provider
 from .pipeline_state import PipelineState
@@ -104,24 +105,25 @@ def _process_frame(
         )
 
     skip_alpr_this_frame = False
-    if cfg.motion_detection_enabled and prev_frame is not None:
-        zones_with_motion = []
-        for zone in active_zones:
-            if has_motion_in_zone(
-                prev_frame,
-                frame,
-                zone,
-                threshold=cfg.motion_threshold_percent,
-                blur_kernel=cfg.motion_blur_kernel,
-            ):
-                zones_with_motion.append(zone)
-
-        if not zones_with_motion:
-            LOG.debug("No motion in any zone, skipping ALPR")
-            skip_alpr_this_frame = True
-
-        if zones_with_motion:
-            active_zones = zones_with_motion
+    # Motion detection disabled - analyze every frame without motion filtering
+    # if cfg.motion_detection_enabled and prev_frame is not None:
+    #     zones_with_motion = []
+    #     for zone in active_zones:
+    #         if has_motion_in_zone(
+    #             prev_frame,
+    #             frame,
+    #             zone,
+    #             threshold=cfg.motion_threshold_percent,
+    #             blur_kernel=cfg.motion_blur_kernel,
+    #         ):
+    #             zones_with_motion.append(zone)
+    #
+    #     if not zones_with_motion:
+    #         LOG.debug("No motion in any zone, skipping ALPR")
+    #         skip_alpr_this_frame = True
+    #
+    #     if zones_with_motion:
+    #         active_zones = zones_with_motion
 
     active_zones_by_id = {}
     for zone in active_zones:
@@ -283,15 +285,8 @@ def _refresh_zone_hold(
     cfg: Settings,
     state: PipelineState,
     now_monotonic: float,
-    motion_detected: bool,
 ) -> None:
-    if not motion_detected:
-        return
-
     for detection in detections:
-        if detection.ocr_confidence < cfg.ocr_extend_threshold:
-            continue
-
         zone_id = detection.zone_id
         zone_state = state.zone_states.get(zone_id)
         if zone_state is None or not zone_state.is_open:
@@ -352,9 +347,10 @@ def _snapshot_stage(
             try:
                 annotated_zone_image, _ = alpr.draw_predictions(zone_image)
                 snapshot_frame = paste_zone_image(snapshot_frame, selected_zone, annotated_zone_image)
-                apply_alpr_predictions = False
             except (ValueError, RuntimeError) as exc:
-                LOG.warning("Failed to annotate zone snapshot, falling back to full-frame: %s", exc)
+                LOG.warning("Failed to annotate zone snapshot: %s", exc)
+            # Never apply full-frame ALPR predictions if we have a zone; detection was in zone only
+            apply_alpr_predictions = False
 
         write_recognition_snapshot(
             frame=snapshot_frame,
@@ -384,18 +380,17 @@ def _preview_stage(
     detections: list[PlateDetection],
     detection_result: DetectionStageResult,
     stage: FrameStageContext,
-    alpr: AlprService,
     state: PipelineState,
 ) -> None:
     """Handle preview artifacts generation.
 
     Args:
         cfg: Settings configuration.
+        camera_id: Camera ID for scoped preview paths.
         frame: Full frame image.
         detections: List of detections in current frame.
         detection_result: Result of decision pipeline.
         stage: Frame processing context.
-        alpr: ALPR service for drawing predictions.
         state: Pipeline state; updates last_preview_write_ts in place.
     """
     if not cfg.preview_enabled:
@@ -407,14 +402,6 @@ def _preview_stage(
 
     annotated = frame
     preview_plates = [d.normalized_text for d in detections if d.normalized_text]
-
-    if not stage.skip_alpr_this_frame:
-        try:
-            annotated, draw_plates = alpr.draw_predictions(frame)
-            if draw_plates:
-                preview_plates = draw_plates
-        except (ValueError, RuntimeError) as exc:
-            LOG.warning("Preview draw_predictions failed: %s", exc)
 
     if stage.active_zones:
         annotated = draw_zones(annotated, stage.active_zones)
@@ -530,7 +517,6 @@ def _poll_single_camera(
         cfg=cfg,
         state=state,
         now_monotonic=time.monotonic(),
-        motion_detected=(not cfg.motion_detection_enabled) or (not stage.skip_alpr_this_frame),
     )
     state.close_all_zones(barrier)
 
@@ -552,7 +538,6 @@ def _poll_single_camera(
         detections=detections,
         detection_result=detection_result,
         stage=stage,
-        alpr=alpr,
         state=state,
     )
 
@@ -563,10 +548,7 @@ def _poll_single_camera(
 def run_camera_worker(camera_id: int, settings: Settings | None = None) -> None:
     """Run the pipeline for one camera."""
     cfg = settings or Settings.from_env()
-    logging.basicConfig(
-        level=logging.INFO,
-        format="%(asctime)s | %(levelname)s | %(name)s | %(message)s",
-    )
+    configure_logging(cfg.log_file_path)
 
     db = Database(cfg.db_path)
     db.init()
@@ -660,10 +642,7 @@ def run(settings: Settings | None = None) -> None:
     are present.
     """
     cfg = settings or Settings.from_env()
-    logging.basicConfig(
-        level=logging.INFO,
-        format="%(asctime)s | %(levelname)s | %(name)s | %(message)s",
-    )
+    configure_logging(cfg.log_file_path)
 
     db = Database(cfg.db_path)
     db.init()

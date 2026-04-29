@@ -91,7 +91,6 @@ def test_preview_stage_writes_camera_specific_files(tmp_path) -> None:
         detections=[detection],
         detection_result=detection_result,
         stage=stage,
-        alpr=DummyAlpr(),
         state=PipelineState.create_initial(),
     )
 

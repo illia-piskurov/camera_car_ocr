@@ -34,7 +34,7 @@ def test_supervisor_idles_when_no_cameras(monkeypatch) -> None:
 
     monkeypatch.setattr(orchestrator.time, "sleep", fake_sleep)
 
-    orchestrator.run(settings=SimpleNamespace(db_path=":memory:", onec_sync_interval_hours=24.0, poll_interval_sec=0.1))
+    orchestrator.run(settings=SimpleNamespace(db_path=":memory:", onec_sync_interval_hours=24.0, poll_interval_sec=0.1, log_file_path=None))
 
     assert spawned == []
     assert sleep_calls["count"] == 1

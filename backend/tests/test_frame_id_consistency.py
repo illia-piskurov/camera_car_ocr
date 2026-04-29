@@ -91,6 +91,7 @@ def test_run_uses_single_frame_fetch_per_cycle(monkeypatch) -> None:
         ocr_open_threshold=0.92,
         detector_model="yolov8n",
         ocr_model="easyocr",
+        log_file_path=":memory:",
         get_camera_credentials_encryption_key=lambda: "test-key",
     )
 
