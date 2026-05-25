@@ -9,8 +9,6 @@ from __future__ import annotations
 import time
 from dataclasses import dataclass, field
 
-import numpy as np
-
 from .barrier import BarrierController
 from .runtime_state import ZoneRuntimeState
 
@@ -26,7 +24,6 @@ class PipelineState:
     zone_states: dict[int | None, ZoneRuntimeState] = field(default_factory=dict)
     last_preview_write_ts: float = 0.0
     last_no_zone_warning_ts: float = 0.0
-    prev_frame: np.ndarray | None = None
 
     def close_all_zones(self, barrier: BarrierController) -> None:
         """Close all currently open zones.
@@ -54,14 +51,6 @@ class PipelineState:
             finally:
                 state.clear()
 
-    def update_frame(self, frame: np.ndarray) -> None:
-        """Update previous frame for motion detection.
-
-        Args:
-            frame: Current frame to store for next iteration.
-        """
-        self.prev_frame = frame
-
     @classmethod
     def create_initial(cls) -> PipelineState:
         """Factory method to create initial pipeline state.
@@ -73,5 +62,4 @@ class PipelineState:
             zone_states={},
             last_preview_write_ts=0.0,
             last_no_zone_warning_ts=0.0,
-            prev_frame=None,
         )

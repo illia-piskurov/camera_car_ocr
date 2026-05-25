@@ -40,7 +40,6 @@ def test_process_frame_uses_camera_specific_zones() -> None:
 
     result = _process_frame(
         frame=frame,
-        prev_frame=None,
         camera_id=42,
         db=DummyDb(),
         cfg=cfg,
@@ -74,7 +73,6 @@ def test_preview_stage_writes_camera_specific_files(tmp_path) -> None:
         frame_id="frame-1",
         active_zones=[],
         active_zones_by_id={},
-        skip_alpr_this_frame=False,
     )
     detection_result = DetectionStageResult(
         frame_last_decision="open",

@@ -101,10 +101,6 @@ class Settings:
     recognition_snapshot_max_files: int = 500
     detection_zones_max: int = 2
 
-    motion_detection_enabled: bool = True
-    motion_threshold_percent: float = 0.05
-    motion_blur_kernel: int = 5
-
     def has_zone_barrier_entities(self, zone_id: int) -> bool:
         open_id, close_id = self.get_zone_barrier_entities(zone_id)
         return bool(open_id and close_id)
@@ -231,9 +227,4 @@ class Settings:
                 os.getenv("RECOGNITION_SNAPSHOT_MAX_FILES", Settings.recognition_snapshot_max_files)
             ),
             detection_zones_max=int(os.getenv("DETECTION_ZONES_MAX", Settings.detection_zones_max)),
-            motion_detection_enabled=os.getenv("MOTION_DETECTION_ENABLED", "1") in {"1", "true", "True"},
-            motion_threshold_percent=float(
-                os.getenv("MOTION_THRESHOLD_PERCENT", Settings.motion_threshold_percent)
-            ),
-            motion_blur_kernel=int(os.getenv("MOTION_BLUR_KERNEL", Settings.motion_blur_kernel)),
         )

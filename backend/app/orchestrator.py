@@ -17,7 +17,6 @@ from .camera import SnapshotCameraClient
 from .config import Settings
 from .db import Database
 from .logging_utils import configure_logging
-from .motion_detector import has_motion_in_zone
 from .onec_provider import WhitelistProvider, create_whitelist_provider
 from .pipeline_state import PipelineState
 from .preview_pipeline import write_preview_artifacts, write_recognition_snapshot
@@ -48,7 +47,6 @@ class FrameStageContext:
     frame_id: str
     active_zones: list[dict[str, object]]
     active_zones_by_id: dict[int, dict[str, object]]
-    skip_alpr_this_frame: bool
 
 
 @dataclass
@@ -75,7 +73,6 @@ def _sync_whitelist(db: Database, provider: WhitelistProvider, cfg: Settings) ->
 def _process_frame(
     *,
     frame,
-    prev_frame,
     camera_id: int | None = None,
     db: Database,
     cfg: Settings,
@@ -101,29 +98,7 @@ def _process_frame(
             frame_id=frame_id,
             active_zones=[],
             active_zones_by_id={},
-            skip_alpr_this_frame=True,
         )
-
-    skip_alpr_this_frame = False
-    # Motion detection disabled - analyze every frame without motion filtering
-    # if cfg.motion_detection_enabled and prev_frame is not None:
-    #     zones_with_motion = []
-    #     for zone in active_zones:
-    #         if has_motion_in_zone(
-    #             prev_frame,
-    #             frame,
-    #             zone,
-    #             threshold=cfg.motion_threshold_percent,
-    #             blur_kernel=cfg.motion_blur_kernel,
-    #         ):
-    #             zones_with_motion.append(zone)
-    #
-    #     if not zones_with_motion:
-    #         LOG.debug("No motion in any zone, skipping ALPR")
-    #         skip_alpr_this_frame = True
-    #
-    #     if zones_with_motion:
-    #         active_zones = zones_with_motion
 
     active_zones_by_id = {}
     for zone in active_zones:
@@ -135,7 +110,6 @@ def _process_frame(
         frame_id=frame_id,
         active_zones=active_zones,
         active_zones_by_id=active_zones_by_id,
-        skip_alpr_this_frame=skip_alpr_this_frame,
     )
 
 
@@ -399,9 +373,6 @@ def _preview_stage(
     now_ts = time.monotonic()
     time_since_last = now_ts - state.last_preview_write_ts
     
-    # Debug: log every preview check (debug level)
-    LOG.debug(f"Preview check: time_since_last={time_since_last:.2f}s, interval={cfg.preview_write_interval_sec}s, should_write={time_since_last >= cfg.preview_write_interval_sec}")
-    
     if time_since_last < cfg.preview_write_interval_sec:
         return
 
@@ -411,9 +382,7 @@ def _preview_stage(
     if stage.active_zones:
         annotated = draw_zones(annotated, stage.active_zones)
 
-    preview_status = "detect" if detections else (
-        "idle-motion-skip" if stage.skip_alpr_this_frame else "idle"
-    )
+    preview_status = "detect" if detections else "idle"
     preview_overlay = f"{stage.now.strftime('%Y-%m-%d %H:%M:%S')} | status={preview_status}"
     cv2.putText(
         annotated,
@@ -441,9 +410,14 @@ def _preview_stage(
             jpeg_quality=cfg.preview_jpeg_quality,
         )
         state.last_preview_write_ts = now_ts
-        LOG.info(f"Preview written: {image_path} (interval={time_since_last:.2f}s, config={cfg.preview_write_interval_sec}s)")
+        LOG.info(
+            "Preview written: %s (interval=%.2fs, config=%.2fs)",
+            image_path,
+            time_since_last,
+            cfg.preview_write_interval_sec,
+        )
     except OSError as exc:
-        LOG.error(f"Failed to save preview artifacts to {image_path}: {exc}")
+        LOG.error("Failed to save preview artifacts to %s: %s", image_path, exc)
 
 
 def _poll_single_camera(
@@ -465,7 +439,7 @@ def _poll_single_camera(
         barrier: BarrierController instance.
         db: Database connection.
         cfg: Settings configuration.
-        state: Pipeline state with zone_states and prev_frame.
+        state: Pipeline state with zone_states.
     """
     camera_id = camera_record.get("id")
     camera_name = camera_record.get("name", "unknown")
@@ -476,10 +450,9 @@ def _poll_single_camera(
         state.close_all_zones(barrier)
         return
 
-    # Process frame (zone filtering, motion detection)
+    # Process frame (zone filtering)
     stage = _process_frame(
         frame=frame,
-        prev_frame=state.prev_frame,
         camera_id=camera_id,
         db=db,
         cfg=cfg,
@@ -487,7 +460,6 @@ def _poll_single_camera(
     )
     if stage is None:
         state.close_all_zones(barrier)
-        state.update_frame(frame)
         return
 
     # Detect plates in zones using single-shot detection
@@ -495,19 +467,18 @@ def _poll_single_camera(
     zone_frames: dict[int, np.ndarray] = {}
     decision_detection: PlateDetection | None = None
 
-    if not stage.skip_alpr_this_frame:
-        detections, zone_frames = _detect_in_zones(
-            frame=frame,
-            alpr=alpr,
-            detected_at=stage.now,
-            frame_id=stage.frame_id,
-            active_zones=stage.active_zones,
-        )
+    detections, zone_frames = _detect_in_zones(
+        frame=frame,
+        alpr=alpr,
+        detected_at=stage.now,
+        frame_id=stage.frame_id,
+        active_zones=stage.active_zones,
+    )
 
-        decision_detection = _select_best_detection(
-            detections=detections,
-            min_ocr_confidence=cfg.ocr_open_threshold,
-        )
+    decision_detection = _select_best_detection(
+        detections=detections,
+        min_ocr_confidence=cfg.ocr_open_threshold,
+    )
 
     # Make decisions and act on detections
     detection_result = _handle_detections(
@@ -549,9 +520,6 @@ def _poll_single_camera(
         stage=stage,
         state=state,
     )
-
-    # Prepare for next iteration
-    state.update_frame(frame)
 
 
 def run_camera_worker(camera_id: int, settings: Settings | None = None) -> None:

@@ -78,14 +78,10 @@ def test_process_frame_respects_configured_zone_limit() -> None:
 
     cfg = SimpleNamespace(
         detection_zones_max=2,
-        motion_detection_enabled=False,
-        motion_threshold_percent=0.05,
-        motion_blur_kernel=5,
     )
 
     context = orchestrator._process_frame(
         frame=np.zeros((8, 8, 3), dtype=np.uint8),
-        prev_frame=None,
         db=DbStub(),
         cfg=cfg,
         state=PipelineState(),
