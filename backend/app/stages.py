@@ -11,6 +11,7 @@ import time
 from .config import Settings
 from .db import Database
 from .barrier import BarrierController
+from .fuzzy_edit import find_best_edit_match
 from .runtime_state import ZoneRuntimeState
 from .types import PlateDetection
 
@@ -21,32 +22,42 @@ def evaluate_decision(
     *,
     plate: str,
     fuzzy_plate: str,
+    ocr_confidence: float,
     db: Database,
     cfg: Settings,
 ) -> tuple[bool, str]:
     """Evaluate whitelist-based decision.
 
     Checks if the plate is whitelisted and returns (should_open, reason_code).
-    Reason codes: "open_approved" or "not_whitelisted".
+    Reason codes: "open_approved", "open_fuzzy_edit", or "not_whitelisted".
 
-    Args:
-        plate: Normalized plate text used for strict whitelist match.
-        fuzzy_plate: Fuzzy-normalized plate text for optional fuzzy match.
-        db: Database for whitelist lookup.
-        cfg: Settings for fuzzy matching config.
-
-    Returns:
-        Tuple of (should_open: bool, reason_code: str).
+    Step 1: strict match (and optional visual-fuzzy match via ENABLE_FUZZY_MATCH).
+    Step 2: if FUZZY_EDIT_ENABLED and confidence >= FUZZY_EDIT_THRESHOLD,
+            compare against every whitelist plate using Levenshtein distance;
+            allow if the closest match is within FUZZY_EDIT_MAX_DISTANCE.
     """
     whitelisted = db.is_whitelisted(
         plate=plate,
         fuzzy_plate=fuzzy_plate,
         enable_fuzzy_match=cfg.enable_fuzzy_match,
     )
+    if whitelisted:
+        return True, "open_approved"
 
-    reason_code = "open_approved" if whitelisted else "not_whitelisted"
+    if cfg.fuzzy_edit_enabled and ocr_confidence >= cfg.fuzzy_edit_threshold:
+        active_plates = db.get_active_plates()
+        matched, dist = find_best_edit_match(plate, active_plates, cfg.fuzzy_edit_max_distance)
+        if matched is not None:
+            LOG.info(
+                "Fuzzy edit match: plate=%s matched=%s dist=%d ocr_conf=%.3f",
+                plate,
+                matched,
+                dist,
+                ocr_confidence,
+            )
+            return True, "open_fuzzy_edit"
 
-    return whitelisted, reason_code
+    return False, "not_whitelisted"
 
 
 def record_decision_event(

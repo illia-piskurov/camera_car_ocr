@@ -8,7 +8,7 @@ import type {
     ZonesResponse,
 } from "@/lib/types"
 
-const API_BASE = process.env.NEXT_PUBLIC_BACKEND_API_BASE ?? "http://127.0.0.1:8000"
+const API_BASE = process.env.NEXT_PUBLIC_BACKEND_API_BASE ?? "http://192.168.100.112:8000"
 
 export async function listCameras(signal?: AbortSignal): Promise<Camera[]> {
     const response = await fetch(`${API_BASE}/api/cameras`, {

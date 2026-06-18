@@ -72,7 +72,21 @@ class BarrierController:
             return zone_entity
         return ""
 
-    def _press_input_button(
+    @staticmethod
+    def _resolve_ha_service(entity_id: str, action: str) -> str:
+        """Return the HA REST service path for a given entity domain and action.
+
+        Supported domains:
+          input_button.*  → input_button/press  (for both open and close)
+          switch.*        → switch/turn_on  (open) / switch/turn_off  (close)
+        """
+        domain = entity_id.split(".", 1)[0] if "." in entity_id else ""
+        if domain == "switch":
+            return "switch/turn_on" if action == "open" else "switch/turn_off"
+        # Default: input_button/press (works for input_button.* and unknown domains)
+        return "input_button/press"
+
+    def _call_ha_service(
         self,
         *,
         entity_id: str,
@@ -100,7 +114,8 @@ class BarrierController:
             )
             return False
 
-        url = f"{self.ha_base_url}/api/services/input_button/press"
+        service_path = self._resolve_ha_service(entity_id, action)
+        url = f"{self.ha_base_url}/api/services/{service_path}"
         headers = {
             "Authorization": f"Bearer {self.ha_token}",
             "Content-Type": "application/json",
@@ -190,7 +205,7 @@ class BarrierController:
         return False
 
     def open(self, plate: str, reason: str, zone_id: int | None = None) -> bool:
-        return self._press_input_button(
+        return self._call_ha_service(
             entity_id=self._resolve_entity_id(action="open", zone_id=zone_id),
             plate=plate,
             reason=reason,
@@ -199,7 +214,7 @@ class BarrierController:
         )
 
     def close(self, reason: str, plate: str | None = None, zone_id: int | None = None) -> bool:
-        return self._press_input_button(
+        return self._call_ha_service(
             entity_id=self._resolve_entity_id(action="close", zone_id=zone_id),
             plate=plate,
             reason=reason,

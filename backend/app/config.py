@@ -89,6 +89,9 @@ class Settings:
     onec_http_retries: int = 2
     onec_http_allow_empty_sync: bool = False
     enable_fuzzy_match: bool = False
+    fuzzy_edit_enabled: bool = False
+    fuzzy_edit_threshold: float = 0.70
+    fuzzy_edit_max_distance: int = 2
 
     preview_enabled: bool = True
     preview_write_interval_sec: float = 1.0
@@ -220,6 +223,9 @@ class Settings:
             onec_http_allow_empty_sync=os.getenv("ONEC_HTTP_ALLOW_EMPTY_SYNC", "0")
             in {"1", "true", "True"},
             enable_fuzzy_match=os.getenv("ENABLE_FUZZY_MATCH", "0") in {"1", "true", "True"},
+            fuzzy_edit_enabled=os.getenv("FUZZY_EDIT_ENABLED", "0") in {"1", "true", "True"},
+            fuzzy_edit_threshold=float(os.getenv("FUZZY_EDIT_THRESHOLD", Settings.fuzzy_edit_threshold)),
+            fuzzy_edit_max_distance=int(os.getenv("FUZZY_EDIT_MAX_DISTANCE", Settings.fuzzy_edit_max_distance)),
             preview_enabled=os.getenv("PREVIEW_ENABLED", "1") in {"1", "true", "True"},
             preview_write_interval_sec=float(
                 os.getenv("PREVIEW_WRITE_INTERVAL_SEC", Settings.preview_write_interval_sec)

@@ -285,6 +285,14 @@ class Database:
             session.commit()
         return len(normalized_plates)
 
+    def get_active_plates(self) -> list[str]:
+        """Return all active normalized plate strings for in-memory fuzzy matching."""
+        with self.SessionLocal() as session:
+            rows = session.execute(
+                select(WhitelistPlate.plate).where(WhitelistPlate.is_active.is_(True))
+            ).scalars().all()
+            return list(rows)
+
     def is_whitelisted(self, plate: str, fuzzy_plate: str, enable_fuzzy_match: bool) -> bool:
         with self.SessionLocal() as session:
             strict_match = session.scalar(

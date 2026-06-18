@@ -215,6 +215,7 @@ def _handle_detections(
     should_open, reason_code = stages.evaluate_decision(
         plate=decision_detection.normalized_text,
         fuzzy_plate=decision_detection.fuzzy_text,
+        ocr_confidence=decision_detection.ocr_confidence,
         db=db,
         cfg=cfg,
     )
@@ -475,9 +476,14 @@ def _poll_single_camera(
         active_zones=stage.active_zones,
     )
 
+    min_ocr_conf = (
+        min(cfg.ocr_open_threshold, cfg.fuzzy_edit_threshold)
+        if cfg.fuzzy_edit_enabled
+        else cfg.ocr_open_threshold
+    )
     decision_detection = _select_best_detection(
         detections=detections,
-        min_ocr_confidence=cfg.ocr_open_threshold,
+        min_ocr_confidence=min_ocr_conf,
     )
 
     # Make decisions and act on detections
