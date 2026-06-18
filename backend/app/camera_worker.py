@@ -2,6 +2,10 @@ from __future__ import annotations
 
 import argparse
 
+from .openvino_bootstrap import configure_openvino_environment
+
+configure_openvino_environment()
+
 from .config import Settings
 from .orchestrator import run_camera_worker
 

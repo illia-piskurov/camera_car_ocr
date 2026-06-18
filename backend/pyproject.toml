@@ -3,13 +3,15 @@ name = "camera-car-ocr"
 version = "0.1.0"
 description = "Camera Car OCR: A Python package for Optical Character Recognition (OCR) on car license plates using camera images."
 readme = "README.md"
-requires-python = ">=3.13"
+requires-python = "==3.11.14"
 dependencies = [
-    "fast-alpr[onnx]>=0.4.0",
+    "fast-alpr>=0.4.0",
     "httpx>=0.28.1",
     "sqlalchemy>=2.0.41",
     "fastapi>=0.116.1",
     "uvicorn>=0.35.0",
     "pytest>=8.4.0",
     "cryptography>=42.0.0",
+    "openvino==2024.4.0",
+    "onnxruntime-openvino==1.20.0",
 ]

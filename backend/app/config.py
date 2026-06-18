@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass
 from pathlib import Path
+from collections.abc import Sequence
 
 
 def _parse_env_line(line: str) -> tuple[str, str] | None:
@@ -100,6 +101,8 @@ class Settings:
     recognition_snapshot_jpeg_quality: int = 90
     recognition_snapshot_max_files: int = 500
     detection_zones_max: int = 2
+    alpr_detector_providers: str = ""
+    alpr_ocr_providers: str = ""
 
     def has_zone_barrier_entities(self, zone_id: int) -> bool:
         open_id, close_id = self.get_zone_barrier_entities(zone_id)
@@ -119,6 +122,17 @@ class Settings:
 
     def get_camera_credentials_encryption_key(self) -> str:
         return self.camera_credentials_encryption_key
+
+    @staticmethod
+    def _parse_provider_list(value: str) -> list[str] | None:
+        providers = [provider.strip() for provider in value.split(",") if provider.strip()]
+        return providers or None
+
+    def get_alpr_detector_providers(self) -> Sequence[str] | None:
+        return self._parse_provider_list(self.alpr_detector_providers)
+
+    def get_alpr_ocr_providers(self) -> Sequence[str] | None:
+        return self._parse_provider_list(self.alpr_ocr_providers)
 
     def _scoped_preview_path(self, base_path: str, camera_id: int | None) -> str:
         if camera_id is None:
@@ -227,4 +241,6 @@ class Settings:
                 os.getenv("RECOGNITION_SNAPSHOT_MAX_FILES", Settings.recognition_snapshot_max_files)
             ),
             detection_zones_max=int(os.getenv("DETECTION_ZONES_MAX", Settings.detection_zones_max)),
+            alpr_detector_providers=os.getenv("ALPR_DETECTOR_PROVIDERS", Settings.alpr_detector_providers),
+            alpr_ocr_providers=os.getenv("ALPR_OCR_PROVIDERS", Settings.alpr_ocr_providers),
         )

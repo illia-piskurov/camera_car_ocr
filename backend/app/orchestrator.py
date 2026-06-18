@@ -543,7 +543,12 @@ def run_camera_worker(camera_id: int, settings: Settings | None = None) -> None:
     username, password, auth_mode = creds
 
     try:
-        alpr = AlprService(detector_model=cfg.detector_model, ocr_model=cfg.ocr_model)
+        alpr = AlprService(
+            detector_model=cfg.detector_model,
+            ocr_model=cfg.ocr_model,
+            detector_providers=cfg.get_alpr_detector_providers(),
+            ocr_providers=cfg.get_alpr_ocr_providers(),
+        )
     except (ValueError, RuntimeError) as exc:
         LOG.error("Failed to initialize ALPR models: %s", exc)
         raise

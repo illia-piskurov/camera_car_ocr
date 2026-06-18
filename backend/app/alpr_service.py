@@ -2,10 +2,12 @@ from __future__ import annotations
 # pyright: reportArgumentType=false, reportOptionalMemberAccess=false, reportCallIssue=false
 
 from datetime import datetime, timezone
+from collections.abc import Sequence
 from typing import Any
 from uuid import uuid4
 
 import numpy as np
+
 from fast_alpr import ALPR
 
 from .normalization import normalize_plate
@@ -13,8 +15,19 @@ from .types import PlateDetection
 
 
 class AlprService:
-    def __init__(self, detector_model: str, ocr_model: str) -> None:
-        self.alpr: Any = ALPR(detector_model=detector_model, ocr_model=ocr_model)  # type: ignore[arg-type]
+    def __init__(
+        self,
+        detector_model: str,
+        ocr_model: str,
+        detector_providers: Sequence[str | tuple[str, dict]] | None = None,
+        ocr_providers: Sequence[str | tuple[str, dict]] | None = None,
+    ) -> None:
+        self.alpr: Any = ALPR(
+            detector_model=detector_model,
+            ocr_model=ocr_model,
+            detector_providers=detector_providers,
+            ocr_providers=ocr_providers,
+        )  # type: ignore[arg-type]
 
     def draw_predictions(self, frame: np.ndarray) -> tuple[np.ndarray, list[str]]:
         drawn: Any = self.alpr.draw_predictions(frame)
