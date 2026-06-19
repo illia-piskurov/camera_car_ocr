@@ -88,6 +88,104 @@ Edit `backend/onec_whitelist_stub.txt` and keep one plate per line.
 When any detection frame is produced, backend saves an annotated snapshot with plate/decision overlay into `RECOGNITION_SNAPSHOT_DIR`.
 Dashboard table rows can open related event snapshot via backend endpoint `/api/events/{event_id}/image`.
 
+## Real-time Event Stream (SSE)
+
+The backend exposes a Server-Sent Events endpoint that pushes every new recognition
+event to all connected clients in real time. This is the recommended integration
+point for guard-room tray apps, secondary displays, or any system that needs to
+react to decisions without polling.
+
+### Endpoint
+
+```
+GET /api/events/stream
+```
+
+**Query parameters**
+
+| Parameter   | Type | Default | Description |
+|-------------|------|---------|-------------|
+| `after_id`  | int  | `0`     | Only stream events with `id > after_id`. Pass the last received ID to resume after a restart without missing events. |
+| `camera_id` | int  | —       | Filter to a single camera. Omit to receive events from all cameras. |
+
+**Reconnect / resume**
+
+The endpoint sets the SSE `id:` field on every message to the event's database ID.
+When a browser `EventSource` reconnects it automatically sends `Last-Event-ID`
+header, and the server resumes from that point — no manual bookkeeping needed.
+
+Non-browser clients should persist the last received `id` and pass it as
+`?after_id=<id>` on reconnect.
+
+**Keepalive**
+
+If no new events arrive for 15 seconds the server sends an SSE comment line
+(`: keepalive`) to prevent proxies and firewalls from closing the idle connection.
+
+### Message format
+
+Each message is a JSON-encoded recognition event:
+
+```jsonc
+{
+  "id": 4821,
+  "occurred_at": "2025-06-18T14:32:01.123456+00:00",
+  "plate": "AA1234BB",
+  "raw_plate": "AA1234BB",
+  "decision": "open",          // "open" | "deny" | "observed"
+  "reason_code": "whitelist_match",
+  "camera_id": 2,
+  "zone_id": 5,
+  "zone_name": "Entry",
+  "ocr_confidence": 0.97,
+  "vote_confirmations": 4,
+  "vote_avg_confidence": 0.96,
+  "detection_confidence": 0.91,
+  "frame_id": "cam2_1718720921_4a3f"
+}
+```
+
+### JavaScript / Tauri example
+
+```javascript
+let lastId = Number(localStorage.getItem("lastEventId") ?? "0")
+
+const source = new EventSource(
+  `http://192.168.100.112:8000/api/events/stream?after_id=${lastId}`
+)
+
+source.onmessage = (e) => {
+  const event = JSON.parse(e.data)
+  lastId = event.id
+  localStorage.setItem("lastEventId", String(lastId))
+
+  if (event.decision === "open") {
+    // show green notification: plate allowed
+  } else if (event.decision === "deny") {
+    // show persistent red alert: plate denied
+  }
+}
+
+source.onerror = () => {
+  // EventSource reconnects automatically; last-event-id is sent by browser
+}
+```
+
+### curl example
+
+```bash
+# Stream all events (Ctrl-C to stop)
+curl -N "http://localhost:8000/api/events/stream"
+
+# Resume from a specific event ID
+curl -N "http://localhost:8000/api/events/stream?after_id=4820"
+
+# Filter to camera 2
+curl -N "http://localhost:8000/api/events/stream?camera_id=2"
+```
+
+---
+
 ## Home Assistant Barrier Mode
 
 1. In Home Assistant, generate a Long-Lived Access Token.

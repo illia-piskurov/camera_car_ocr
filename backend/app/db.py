@@ -759,6 +759,43 @@ class Database:
                 stmt = stmt.where(RecognitionEvent.decision == decision)
             return session.execute(stmt).scalar() or 0
 
+    def get_events_after(
+        self,
+        after_id: int,
+        camera_id: int | None = None,
+        limit: int = 50,
+    ) -> list[dict[str, object]]:
+        with self.SessionLocal() as session:
+            stmt = (
+                select(RecognitionEvent)
+                .where(RecognitionEvent.id > after_id)
+                .order_by(RecognitionEvent.id.asc())
+                .limit(limit)
+            )
+            if camera_id is not None:
+                stmt = stmt.where(RecognitionEvent.camera_id == camera_id)
+            rows = session.execute(stmt).scalars()
+            result: list[dict[str, object]] = []
+            for row in rows:
+                occurred_at = _utc_or_now(row.occurred_at)
+                result.append({
+                    "id": row.id,
+                    "occurred_at": occurred_at.isoformat(),
+                    "frame_id": row.frame_id,
+                    "raw_plate": row.raw_plate,
+                    "plate": row.plate,
+                    "decision": row.decision,
+                    "reason_code": row.reason_code,
+                    "detection_confidence": row.detection_confidence,
+                    "ocr_confidence": row.ocr_confidence,
+                    "vote_confirmations": row.vote_confirmations,
+                    "vote_avg_confidence": row.vote_avg_confidence,
+                    "zone_id": row.zone_id,
+                    "zone_name": row.zone_name,
+                    "camera_id": row.camera_id,
+                })
+            return result
+
     def get_event_frame_id(self, event_id: int) -> str | None:
         with self.SessionLocal() as session:
             row = session.get(RecognitionEvent, event_id)

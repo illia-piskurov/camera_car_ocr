@@ -1,11 +1,12 @@
 from __future__ import annotations
 
+import asyncio
 import glob
 import json
 import os
 from datetime import timedelta
 
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel, Field
@@ -425,6 +426,54 @@ def list_events(
         "limit": limit,
         "has_more": offset + limit < total,
     }
+
+
+@app.get("/api/events/stream")
+async def stream_events(
+    request: Request,
+    after_id: int = Query(0, ge=0),
+    camera_id: int | None = Query(None),
+) -> StreamingResponse:
+    """SSE stream of recognition events.
+
+    Yields one SSE message per new event as soon as it is written to the DB.
+    The client should reconnect on disconnect; the browser EventSource does this
+    automatically using the SSE ``id:`` field sent with every message.
+    """
+    # Honor Last-Event-ID header sent by browser on automatic reconnect
+    raw_last_id = request.headers.get("last-event-id")
+    if raw_last_id and raw_last_id.isdigit():
+        after_id = int(raw_last_id)
+
+    async def generator() -> object:
+        current_id = after_id
+        last_keepalive = asyncio.get_event_loop().time()
+        while True:
+            if await request.is_disconnected():
+                break
+
+            new_events = db.get_events_after(current_id, camera_id=camera_id)
+            for evt in new_events:
+                current_id = int(str(evt["id"]))
+                data = json.dumps(evt, ensure_ascii=False)
+                yield f"id: {current_id}\ndata: {data}\n\n"
+                last_keepalive = asyncio.get_event_loop().time()
+
+            now = asyncio.get_event_loop().time()
+            if now - last_keepalive >= 15:
+                yield ": keepalive\n\n"
+                last_keepalive = now
+
+            await asyncio.sleep(1)
+
+    return StreamingResponse(
+        generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+        },
+    )
 
 
 @app.get("/api/cameras/{camera_id}/zones")
