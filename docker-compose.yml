@@ -1,15 +1,32 @@
+x-backend-common: &backend-common
+  image: camera_car_ocr_backend:local
+  env_file:
+    - ./.env
+  volumes:
+    - ./backend/data:/app/data
+  devices:
+    - /dev/dri:/dev/dri
+  group_add:
+    - "993"  # render GID: getent group render
+    - "44"   # video GID: getent group video
+  stop_grace_period: 30s
+  logging:
+    driver: json-file
+    options:
+      max-size: "10m"
+      max-file: "5"
+  restart: unless-stopped
+
 services:
-  backend:
+  backend-api:
+    <<: *backend-common
     build:
       context: ./backend
       dockerfile: Dockerfile
-    container_name: camera_car_ocr_backend
-    env_file:
-      - ./.env
+    container_name: camera_car_ocr_api
+    command: uv run uvicorn app.api_server:app --host 0.0.0.0 --port 8000
     ports:
       - "${BACKEND_PORT:-8000}:8000"
-    volumes:
-      - ./backend/data:/app/data
     healthcheck:
       test:
         [
@@ -22,13 +39,14 @@ services:
       timeout: 5s
       retries: 5
       start_period: 20s
-    stop_grace_period: 30s
-    logging:
-      driver: json-file
-      options:
-        max-size: "10m"
-        max-file: "5"
-    restart: unless-stopped
+
+  backend-worker:
+    <<: *backend-common
+    container_name: camera_car_ocr_worker
+    command: uv run python main.py
+    depends_on:
+      backend-api:
+        condition: service_healthy
 
   frontend:
     build:
@@ -41,7 +59,7 @@ services:
       - NEXT_PUBLIC_BACKEND_API_BASE=${NEXT_PUBLIC_BACKEND_API_BASE:-http://localhost:8000}
       - PORT=3000
     depends_on:
-      backend:
+      backend-api:
         condition: service_healthy
     ports:
       - "${FRONTEND_PORT:-3000}:3000"
