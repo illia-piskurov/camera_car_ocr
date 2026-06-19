@@ -699,6 +699,66 @@ class Database:
                 )
             return result
 
+    def get_events(
+        self,
+        limit: int = 200,
+        offset: int = 0,
+        camera_id: int | None = None,
+        search: str | None = None,
+        decision: str | None = None,
+    ) -> list[dict[str, object]]:
+        with self.SessionLocal() as session:
+            stmt = select(RecognitionEvent).order_by(RecognitionEvent.occurred_at.desc())
+            if camera_id is not None:
+                stmt = stmt.where(RecognitionEvent.camera_id == camera_id)
+            if search:
+                pattern = f"%{search}%"
+                stmt = stmt.where(
+                    RecognitionEvent.plate.ilike(pattern) | RecognitionEvent.raw_plate.ilike(pattern)
+                )
+            if decision:
+                stmt = stmt.where(RecognitionEvent.decision == decision)
+            rows = session.execute(stmt.offset(offset).limit(limit)).scalars()
+            result: list[dict[str, object]] = []
+            for row in rows:
+                occurred_at = _utc_or_now(row.occurred_at)
+                result.append({
+                    "id": row.id,
+                    "occurred_at": occurred_at.isoformat(),
+                    "frame_id": row.frame_id,
+                    "raw_plate": row.raw_plate,
+                    "plate": row.plate,
+                    "decision": row.decision,
+                    "reason_code": row.reason_code,
+                    "detection_confidence": row.detection_confidence,
+                    "ocr_confidence": row.ocr_confidence,
+                    "vote_confirmations": row.vote_confirmations,
+                    "vote_avg_confidence": row.vote_avg_confidence,
+                    "zone_id": row.zone_id,
+                    "zone_name": row.zone_name,
+                    "camera_id": row.camera_id,
+                })
+            return result
+
+    def count_events(
+        self,
+        camera_id: int | None = None,
+        search: str | None = None,
+        decision: str | None = None,
+    ) -> int:
+        with self.SessionLocal() as session:
+            stmt = select(func.count()).select_from(RecognitionEvent)
+            if camera_id is not None:
+                stmt = stmt.where(RecognitionEvent.camera_id == camera_id)
+            if search:
+                pattern = f"%{search}%"
+                stmt = stmt.where(
+                    RecognitionEvent.plate.ilike(pattern) | RecognitionEvent.raw_plate.ilike(pattern)
+                )
+            if decision:
+                stmt = stmt.where(RecognitionEvent.decision == decision)
+            return session.execute(stmt).scalar() or 0
+
     def get_event_frame_id(self, event_id: int) -> str | None:
         with self.SessionLocal() as session:
             row = session.get(RecognitionEvent, event_id)

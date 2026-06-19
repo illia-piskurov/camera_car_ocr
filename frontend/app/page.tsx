@@ -5,6 +5,7 @@ import { useEffect, useState } from "react"
 import { Button } from "@/components/ui/button"
 import { ControlRoomHeader } from "@/components/ControlRoomHeader"
 import { CameraGroupsPanel } from "@/components/CameraGroupsPanel"
+import { HistoryPanel } from "@/components/HistoryPanel"
 import { ConfirmationDialog } from "@/components/ConfirmationDialog"
 import { PreviewWithZones } from "@/components/PreviewWithZones"
 import { ZonesPanel } from "@/components/ZonesPanel"
@@ -32,6 +33,7 @@ export default function Page() {
   const { data, preview, previewImageSrc, cameras, loading, error, refreshing, isStale, syncAgeSec, refresh, runForceSync } =
     useDashboard(selectedCameraId)
   const [groupsPanelOpen, setGroupsPanelOpen] = useState(false)
+  const [historyPanelOpen, setHistoryPanelOpen] = useState(false)
   const [selectedEventId, setSelectedEventId] = useState<number | null>(null)
   const [selectedImageError, setSelectedImageError] = useState<string | null>(null)
   const [zoneDraft, setZoneDraft] = useState<DetectionZone[]>([])
@@ -211,6 +213,7 @@ export default function Page() {
         onEditCamera={handleOpenEditCamera}
         onDeleteCamera={handleOpenDeleteCamera}
         onOpenGroups={() => setGroupsPanelOpen(true)}
+        onOpenHistory={() => setHistoryPanelOpen(true)}
         syncAgeSec={syncAgeSec}
         onRefresh={() => void refresh()}
         onForceSync={() => void runForceSync()}
@@ -346,6 +349,17 @@ export default function Page() {
 
       {groupsPanelOpen && (
         <CameraGroupsPanel onClose={() => setGroupsPanelOpen(false)} />
+      )}
+
+      {historyPanelOpen && (
+        <HistoryPanel
+          cameras={cameras}
+          onClose={() => setHistoryPanelOpen(false)}
+          onEventSelect={(eventId) => {
+            setSelectedImageError(null)
+            setSelectedEventId(eventId)
+          }}
+        />
       )}
 
       <ConfirmationDialog

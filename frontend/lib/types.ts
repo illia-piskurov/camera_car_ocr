@@ -78,6 +78,7 @@ export type DashboardEvent = {
     vote_avg_confidence: number | null
     zone_id: number | null
     zone_name: string | null
+    camera_id: number | null
 }
 
 export type DashboardData = {
@@ -108,6 +109,14 @@ export type DashboardData = {
         avg_confidence: number
     }
     recent_events: DashboardEvent[]
+}
+
+export type EventsPage = {
+    events: DashboardEvent[]
+    total: number
+    offset: number
+    limit: number
+    has_more: boolean
 }
 
 export type ForceSyncResult = {

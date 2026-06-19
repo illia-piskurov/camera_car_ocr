@@ -3,6 +3,7 @@ import type {
     CameraCreatePayload,
     CameraGroup,
     CameraUpdatePayload,
+    EventsPage,
     ForceSyncResult,
     PeerZone,
     PreviewData,
@@ -250,6 +251,27 @@ export async function deleteCameraGroup(groupId: number): Promise<void> {
         cache: "no-store",
     })
     if (!response.ok) throw new Error(`Delete group failed: ${response.status}`)
+}
+
+export async function fetchEvents(
+    params: {
+        cameraId?: number | null
+        search?: string
+        decision?: string
+        offset?: number
+        limit?: number
+    },
+    signal?: AbortSignal,
+): Promise<EventsPage> {
+    const query = new URLSearchParams()
+    if (params.cameraId != null) query.set("camera_id", String(params.cameraId))
+    if (params.search) query.set("search", params.search)
+    if (params.decision) query.set("decision", params.decision)
+    if (params.offset != null) query.set("offset", String(params.offset))
+    if (params.limit != null) query.set("limit", String(params.limit))
+    const response = await fetch(`${API_BASE}/api/events?${query.toString()}`, { cache: "no-store", signal })
+    if (!response.ok) throw new Error(`Events request failed: ${response.status}`)
+    return (await response.json()) as EventsPage
 }
 
 export async function fetchCameraPeerZones(cameraId: number, signal?: AbortSignal): Promise<PeerZone[]> {

@@ -5,7 +5,7 @@ import json
 import os
 from datetime import timedelta
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel, Field
@@ -405,6 +405,25 @@ def camera_dashboard(camera_id: int) -> dict[str, object]:
             "avg_confidence": avg_confidence,
         },
         "recent_events": recent_events,
+    }
+
+
+@app.get("/api/events")
+def list_events(
+    camera_id: int | None = Query(None),
+    search: str | None = Query(None),
+    decision: str | None = Query(None),
+    offset: int = Query(0, ge=0),
+    limit: int = Query(200, ge=1, le=500),
+) -> dict[str, object]:
+    events = db.get_events(limit=limit, offset=offset, camera_id=camera_id, search=search, decision=decision)
+    total = db.count_events(camera_id=camera_id, search=search, decision=decision)
+    return {
+        "events": events,
+        "total": total,
+        "offset": offset,
+        "limit": limit,
+        "has_more": offset + limit < total,
     }
 
 
