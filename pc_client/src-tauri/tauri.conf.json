@@ -1,6 +1,6 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "ALPR Монітор",
+  "productName": "ALPR_Monitor",
   "version": "0.1.0",
   "identifier": "com.alpr.monitor",
   "build": {
