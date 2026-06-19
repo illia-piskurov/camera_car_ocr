@@ -23,28 +23,29 @@ def evaluate_decision(
     plate: str,
     fuzzy_plate: str,
     ocr_confidence: float,
+    camera_id: int | None,
+    zone_id: int | None = None,
     db: Database,
     cfg: Settings,
 ) -> tuple[bool, str]:
     """Evaluate whitelist-based decision.
 
     Checks if the plate is whitelisted and returns (should_open, reason_code).
-    Reason codes: "open_approved", "open_fuzzy_edit", or "not_whitelisted".
+    Reason codes: "open_approved", "open_fuzzy_edit", "cross_camera_suppressed",
+    or "not_whitelisted".
 
     Step 1: strict match (and optional visual-fuzzy match via ENABLE_FUZZY_MATCH).
     Step 2: if FUZZY_EDIT_ENABLED and confidence >= FUZZY_EDIT_THRESHOLD,
             compare against every whitelist plate using Levenshtein distance;
             allow if the closest match is within FUZZY_EDIT_MAX_DISTANCE.
+    Step 3: if whitelisted, check cross-camera group suppression — if a peer
+            camera in the same group recently opened for this plate, suppress.
     """
-    whitelisted = db.is_whitelisted(
-        plate=plate,
-        fuzzy_plate=fuzzy_plate,
-        enable_fuzzy_match=cfg.enable_fuzzy_match,
-    )
-    if whitelisted:
-        return True, "open_approved"
+    reason: str | None = None
 
-    if cfg.fuzzy_edit_enabled and ocr_confidence >= cfg.fuzzy_edit_threshold:
+    if db.is_whitelisted(plate=plate, fuzzy_plate=fuzzy_plate, enable_fuzzy_match=cfg.enable_fuzzy_match):
+        reason = "open_approved"
+    elif cfg.fuzzy_edit_enabled and ocr_confidence >= cfg.fuzzy_edit_threshold:
         active_plates = db.get_active_plates()
         matched, dist = find_best_edit_match(plate, active_plates, cfg.fuzzy_edit_max_distance)
         if matched is not None:
@@ -55,9 +56,17 @@ def evaluate_decision(
                 dist,
                 ocr_confidence,
             )
-            return True, "open_fuzzy_edit"
+            reason = "open_fuzzy_edit"
 
-    return False, "not_whitelisted"
+    if reason is None:
+        return False, "not_whitelisted"
+
+    cross_max_dist = cfg.fuzzy_edit_max_distance if cfg.fuzzy_edit_enabled else 0
+    if camera_id is not None and db.is_cross_camera_suppressed(plate=plate, camera_id=camera_id, zone_id=zone_id, max_distance=cross_max_dist):
+        LOG.info("Cross-camera suppressed: plate=%s camera_id=%s zone_id=%s", plate, camera_id, zone_id)
+        return False, "cross_camera_suppressed"
+
+    return True, reason
 
 
 def record_decision_event(

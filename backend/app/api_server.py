@@ -45,6 +45,8 @@ class ZoneInput(BaseModel):
     y_max: float = Field(ge=0.0, le=1.0)
     is_enabled: bool = True
     sort_order: int = 0
+    cross_camera_enabled: bool = True
+    cross_zone_id: int | None = None
 
 
 class ZonesPayload(BaseModel):
@@ -59,6 +61,7 @@ class CameraInput(BaseModel):
     auth_mode: str = Field(default="digest")
     is_active: bool = True
     sort_order: int | None = None
+    group_id: int | None = None
 
 
 class CameraUpdateInput(BaseModel):
@@ -69,6 +72,17 @@ class CameraUpdateInput(BaseModel):
     auth_mode: str | None = Field(default=None, max_length=32)
     is_active: bool | None = None
     sort_order: int | None = None
+    group_id: int | None = Field(default=None)
+
+
+class CameraGroupInput(BaseModel):
+    name: str = Field(min_length=1, max_length=128)
+    cross_suppress_sec: int = Field(default=120, ge=0)
+
+
+class CameraGroupUpdateInput(BaseModel):
+    name: str | None = Field(default=None, max_length=128)
+    cross_suppress_sec: int | None = Field(default=None, ge=0)
 
 
 def _read_preview_meta(meta_path: str) -> dict[str, object]:
@@ -104,6 +118,42 @@ def health() -> dict[str, object]:
         "service": "backend",
         "db": "ok" if db_ok else "unreachable",
     }
+
+
+@app.get("/api/camera-groups")
+def list_camera_groups() -> dict[str, object]:
+    return {"groups": db.list_camera_groups()}
+
+
+@app.post("/api/camera-groups")
+def create_camera_group(payload: CameraGroupInput) -> dict[str, object]:
+    group = db.create_camera_group(name=payload.name, cross_suppress_sec=payload.cross_suppress_sec)
+    return {"status": "ok", "group": group}
+
+
+@app.put("/api/camera-groups/{group_id}")
+def update_camera_group(group_id: int, payload: CameraGroupUpdateInput) -> dict[str, object]:
+    group = db.update_camera_group(group_id, name=payload.name, cross_suppress_sec=payload.cross_suppress_sec)
+    if group is None:
+        raise HTTPException(status_code=404, detail=f"Camera group {group_id} not found")
+    return {"status": "ok", "group": group}
+
+
+@app.delete("/api/camera-groups/{group_id}")
+def delete_camera_group(group_id: int) -> dict[str, object]:
+    deleted = db.delete_camera_group(group_id)
+    if not deleted:
+        raise HTTPException(status_code=404, detail=f"Camera group {group_id} not found")
+    return {"status": "ok"}
+
+
+@app.get("/api/cameras/{camera_id}/peer-zones")
+def get_camera_peer_zones(camera_id: int) -> dict[str, object]:
+    """Return zones from all peer cameras in the same group (for cross-zone config)."""
+    camera = db.get_camera(camera_id)
+    if camera is None:
+        raise HTTPException(status_code=404, detail=f"Camera {camera_id} not found")
+    return {"peer_zones": db.get_group_peer_zones(camera_id)}
 
 
 @app.get("/api/cameras")
@@ -142,6 +192,7 @@ def create_camera(payload: CameraInput) -> dict[str, object]:
         encryption_key=cfg.get_camera_credentials_encryption_key(),
         is_active=payload.is_active,
         sort_order=payload.sort_order,
+        group_id=payload.group_id,
     )
     return {"status": "ok", "camera": camera}
 
@@ -193,6 +244,7 @@ def update_camera(camera_id: int, payload: CameraUpdateInput) -> dict[str, objec
         if validation.get("status") != "ok":
             raise HTTPException(status_code=400, detail="Camera validation failed")
 
+    group_id_update = payload.group_id if "group_id" in payload.model_fields_set else ...
     camera = db.update_camera(
         camera_id,
         name=payload.name,
@@ -203,6 +255,7 @@ def update_camera(camera_id: int, payload: CameraUpdateInput) -> dict[str, objec
         encryption_key=cfg.get_camera_credentials_encryption_key(),
         is_active=payload.is_active,
         sort_order=payload.sort_order,
+        group_id=group_id_update,
     )
     if camera is None:
         raise HTTPException(status_code=404, detail=f"Camera {camera_id} not found")
@@ -330,11 +383,9 @@ def camera_dashboard(camera_id: int) -> dict[str, object]:
             "dry_run_open": cfg.dry_run_open,
             "barrier_action_mode": cfg.barrier_action_mode,
             "barrier_close_delay_sec": cfg.barrier_close_delay_sec,
-            "barrier_live_configured": cfg.is_barrier_live_configured(),
-            "zone1_barrier_configured": cfg.has_zone_barrier_entities(1),
-            "zone2_barrier_configured": cfg.has_zone_barrier_entities(2),
-            "zone1_close_delay_sec": cfg.get_zone_close_delay_sec(1),
-            "zone2_close_delay_sec": cfg.get_zone_close_delay_sec(2),
+            "barrier_live_configured": cfg.is_ha_configured() and any(
+                z.get("ha_open_entity_id") for z in db.get_zones(include_disabled=False, camera_id=camera_id)
+            ),
             "ocr_open_threshold": cfg.ocr_open_threshold,
             "ocr_extend_threshold": cfg.ocr_extend_threshold,
             "decision_model_version": "single-shot-v1",

@@ -4,6 +4,7 @@ import { useEffect, useState } from "react"
 
 import { Button } from "@/components/ui/button"
 import { ControlRoomHeader } from "@/components/ControlRoomHeader"
+import { CameraGroupsPanel } from "@/components/CameraGroupsPanel"
 import { ConfirmationDialog } from "@/components/ConfirmationDialog"
 import { PreviewWithZones } from "@/components/PreviewWithZones"
 import { ZonesPanel } from "@/components/ZonesPanel"
@@ -30,6 +31,7 @@ export default function Page() {
   const [cameraStateError, setCameraStateError] = useState<string | null>(null)
   const { data, preview, previewImageSrc, cameras, loading, error, refreshing, isStale, syncAgeSec, refresh, runForceSync } =
     useDashboard(selectedCameraId)
+  const [groupsPanelOpen, setGroupsPanelOpen] = useState(false)
   const [selectedEventId, setSelectedEventId] = useState<number | null>(null)
   const [selectedImageError, setSelectedImageError] = useState<string | null>(null)
   const [zoneDraft, setZoneDraft] = useState<DetectionZone[]>([])
@@ -208,6 +210,7 @@ export default function Page() {
         onAddCamera={handleOpenCreateCamera}
         onEditCamera={handleOpenEditCamera}
         onDeleteCamera={handleOpenDeleteCamera}
+        onOpenGroups={() => setGroupsPanelOpen(true)}
         syncAgeSec={syncAgeSec}
         onRefresh={() => void refresh()}
         onForceSync={() => void runForceSync()}
@@ -276,6 +279,8 @@ export default function Page() {
               zonesDirty={zonesDirty}
               zonesSaving={zonesSaving}
               zonesMessage={zonesMessage}
+              cameraId={selectedCameraId}
+              cameraGroupId={selectedCamera?.group_id ?? null}
               onChangeZones={(zones) => {
                 setZoneDraft(zones)
                 setZonesDirty(true)
@@ -337,6 +342,10 @@ export default function Page() {
             </div>
           </div>
         </div>
+      )}
+
+      {groupsPanelOpen && (
+        <CameraGroupsPanel onClose={() => setGroupsPanelOpen(false)} />
       )}
 
       <ConfirmationDialog

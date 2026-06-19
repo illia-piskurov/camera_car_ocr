@@ -1,7 +1,7 @@
 "use client"
 
 import { useEffect, useMemo, useRef, useState } from "react"
-import { Camera, ChevronDown, PencilLine, Plus, RefreshCw, Trash2, Zap } from "lucide-react"
+import { Camera, ChevronDown, Layers, PencilLine, Plus, RefreshCw, Trash2, Zap } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import type { Camera as CameraModel } from "@/lib/types"
 
@@ -12,6 +12,7 @@ type ControlRoomHeaderProps = {
     onAddCamera: () => void
     onEditCamera: (camera: CameraModel) => void
     onDeleteCamera: (camera: CameraModel) => void
+    onOpenGroups: () => void
     syncAgeSec: number | null
     onRefresh: () => void
     onForceSync: () => void
@@ -43,6 +44,7 @@ export function ControlRoomHeader({
     onAddCamera,
     onEditCamera,
     onDeleteCamera,
+    onOpenGroups,
     syncAgeSec,
     onRefresh,
     onForceSync,
@@ -279,6 +281,15 @@ export function ControlRoomHeader({
                 </Button>
 
                 <div className="ml-auto flex items-center gap-2">
+                    <Button
+                        variant="secondary"
+                        size="sm"
+                        onClick={onOpenGroups}
+                        className="gap-2 border border-slate-500/70 bg-slate-700/80 text-slate-100 hover:bg-slate-600/90"
+                    >
+                        <Layers className="size-4" />
+                        Groups
+                    </Button>
                     <Button
                         variant="secondary"
                         size="sm"

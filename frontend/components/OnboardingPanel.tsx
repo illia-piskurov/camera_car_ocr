@@ -2,8 +2,8 @@
 
 import { useEffect, useState } from "react"
 import { Button } from "@/components/ui/button"
-import { createCamera, updateCamera, validateCamera } from "@/lib/api"
-import type { Camera, CameraCreatePayload, CameraUpdatePayload } from "@/lib/types"
+import { createCamera, listCameraGroups, updateCamera, validateCamera } from "@/lib/api"
+import type { Camera, CameraCreatePayload, CameraGroup, CameraUpdatePayload } from "@/lib/types"
 
 interface OnboardingPanelProps {
     mode: "create" | "edit"
@@ -20,6 +20,7 @@ type CameraFormValues = {
     password: string
     auth_mode: string
     sort_order: string
+    group_id: string
 }
 
 function buildInitialFormValues(mode: "create" | "edit", camera?: Camera | null): CameraFormValues {
@@ -31,6 +32,7 @@ function buildInitialFormValues(mode: "create" | "edit", camera?: Camera | null)
             password: "",
             auth_mode: camera.auth_mode,
             sort_order: String(camera.sort_order),
+            group_id: camera.group_id != null ? String(camera.group_id) : "",
         }
     }
 
@@ -41,6 +43,7 @@ function buildInitialFormValues(mode: "create" | "edit", camera?: Camera | null)
         password: "",
         auth_mode: "http_basic",
         sort_order: "",
+        group_id: "",
     }
 }
 
@@ -60,6 +63,7 @@ export function OnboardingPanel({ mode, camera, onCameraSaved, onCancel, isFirst
     const [loading, setLoading] = useState(false)
     const [error, setError] = useState<string | null>(null)
     const [validating, setValidating] = useState(false)
+    const [groups, setGroups] = useState<CameraGroup[]>([])
 
     const [formData, setFormData] = useState<CameraFormValues>(() => buildInitialFormValues(mode, camera))
 
@@ -68,6 +72,17 @@ export function OnboardingPanel({ mode, camera, onCameraSaved, onCancel, isFirst
         setError(null)
         setFormData(buildInitialFormValues(mode, camera))
     }, [camera?.id, isCreateMode, isFirstCameraFlow, mode])
+
+    useEffect(() => {
+        listCameraGroups().then(setGroups).catch(() => setGroups([]))
+    }, [])
+
+    function parseGroupId(): number | null {
+        const v = formData.group_id.trim()
+        if (!v) return null
+        const n = parseInt(v)
+        return Number.isFinite(n) ? n : null
+    }
 
     async function handleValidate() {
         setValidating(true)
@@ -81,6 +96,7 @@ export function OnboardingPanel({ mode, camera, onCameraSaved, onCancel, isFirst
                 password: formData.password,
                 auth_mode: formData.auth_mode,
                 sort_order: buildSortOrder(formData.sort_order),
+                group_id: parseGroupId(),
             }
             const result = await validateCamera(payload)
             if (!result.available) {
@@ -107,6 +123,7 @@ export function OnboardingPanel({ mode, camera, onCameraSaved, onCancel, isFirst
                 password: formData.password,
                 auth_mode: formData.auth_mode,
                 sort_order: buildSortOrder(formData.sort_order),
+                group_id: parseGroupId(),
             }
             const result = await createCamera(nextPayload)
             onCameraSaved(result.camera)
@@ -138,6 +155,7 @@ export function OnboardingPanel({ mode, camera, onCameraSaved, onCancel, isFirst
                 snapshot_url: snapshotUrl,
                 auth_mode: formData.auth_mode,
                 sort_order: buildSortOrder(formData.sort_order),
+                group_id: parseGroupId(),
             }
 
             if (formData.username.trim()) {
@@ -302,6 +320,19 @@ export function OnboardingPanel({ mode, camera, onCameraSaved, onCancel, isFirst
                                     onChange={(e) => setFormData({ ...formData, sort_order: e.target.value })}
                                     className="w-full px-3 py-2 bg-slate-600 text-white placeholder-slate-400 rounded border border-slate-500 focus:border-blue-500 focus:outline-none"
                                 />
+                            </div>
+                            <div>
+                                <label className="block text-sm font-medium text-slate-300 mb-1">Camera Group</label>
+                                <select
+                                    value={formData.group_id}
+                                    onChange={(e) => setFormData({ ...formData, group_id: e.target.value })}
+                                    className="w-full px-3 py-2 bg-slate-600 text-white rounded border border-slate-500 focus:border-blue-500 focus:outline-none"
+                                >
+                                    <option value="">None</option>
+                                    {groups.map((g) => (
+                                        <option key={g.id} value={String(g.id)}>{g.name}</option>
+                                    ))}
+                                </select>
                             </div>
                         </div>
                     </div>

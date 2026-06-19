@@ -216,6 +216,8 @@ def _handle_detections(
         plate=decision_detection.normalized_text,
         fuzzy_plate=decision_detection.fuzzy_text,
         ocr_confidence=decision_detection.ocr_confidence,
+        camera_id=camera_id,
+        zone_id=decision_detection.zone_id,
         db=db,
         cfg=cfg,
     )
@@ -598,6 +600,18 @@ def run_camera_worker(camera_id: int, settings: Settings | None = None) -> None:
             if current_camera is None or not current_camera.get("is_active", False):
                 LOG.info("Camera %s became inactive; stopping worker", camera_id)
                 return
+
+            current_zones = db.get_zones(include_disabled=True, camera_id=camera_id)
+            barrier.zone_open_entity_ids = {
+                int(z["id"]): str(z.get("ha_open_entity_id") or "")
+                for z in current_zones
+                if z.get("ha_open_entity_id")
+            }
+            barrier.zone_close_entity_ids = {
+                int(z["id"]): str(z.get("ha_close_entity_id") or "")
+                for z in current_zones
+                if z.get("ha_close_entity_id")
+            }
 
             try:
                 _poll_single_camera(

@@ -1,3 +1,11 @@
+export type CameraGroup = {
+    id: number
+    name: string
+    cross_suppress_sec: number
+    created_at: string
+    updated_at: string
+}
+
 export type Camera = {
     id: number
     name: string
@@ -5,6 +13,7 @@ export type Camera = {
     auth_mode: string
     is_active: boolean
     sort_order: number
+    group_id: number | null
     created_at: string
     updated_at: string
     has_credentials: boolean
@@ -18,6 +27,7 @@ export type CameraCreatePayload = {
     auth_mode: string
     is_active?: boolean
     sort_order?: number | null
+    group_id?: number | null
 }
 
 export type CameraUpdatePayload = {
@@ -28,6 +38,7 @@ export type CameraUpdatePayload = {
     auth_mode?: string
     is_active?: boolean
     sort_order?: number | null
+    group_id?: number | null
 }
 
 export type DetectionZone = {
@@ -42,6 +53,15 @@ export type DetectionZone = {
     camera_id?: number | null
     ha_open_entity_id?: string
     ha_close_entity_id?: string
+    cross_camera_enabled: boolean
+    cross_zone_id: number | null
+}
+
+export type PeerZone = {
+    id: number
+    camera_id: number
+    camera_name: string
+    name: string
 }
 
 export type DashboardEvent = {
@@ -67,14 +87,8 @@ export type DashboardData = {
         barrier_action_mode: string
         barrier_close_delay_sec: number
         barrier_live_configured: boolean
-        zone1_barrier_configured: boolean
-        zone2_barrier_configured: boolean
-        zone1_close_delay_sec: number
-        zone2_close_delay_sec: number
         ocr_open_threshold: number
         ocr_extend_threshold: number
-        two_shot_gap_ms: number
-        two_shot_max_pairs: number
         decision_model_version: string
         legacy_config_deprecated: boolean
     }

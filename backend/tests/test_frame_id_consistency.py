@@ -90,6 +90,8 @@ def test_run_uses_single_frame_fetch_per_cycle(monkeypatch) -> None:
         ocr_model="easyocr",
         log_file_path=":memory:",
         get_camera_credentials_encryption_key=lambda: "test-key",
+        get_alpr_detector_providers=lambda: None,
+        get_alpr_ocr_providers=lambda: None,
     )
 
     def fake_detect_in_zones(*, frame, alpr, detected_at, frame_id, active_zones):

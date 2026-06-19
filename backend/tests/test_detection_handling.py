@@ -46,7 +46,7 @@ def test_handle_detections_records_final_open_and_calls_barrier(monkeypatch) -> 
     def fake_record_decision_event(*, detection, decision, reason_code, db, camera_id=None):
         recorded.append((decision, reason_code))
 
-    def fake_evaluate_decision(*, plate, fuzzy_plate, db, cfg):
+    def fake_evaluate_decision(*, plate, fuzzy_plate, ocr_confidence, camera_id, zone_id, db, cfg):
         return True, "open_approved"
 
     def fake_execute_barrier_action(*, should_open, detection, reason_code, barrier, cfg, zone_states):

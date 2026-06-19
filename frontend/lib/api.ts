@@ -1,8 +1,10 @@
 import type {
     Camera,
     CameraCreatePayload,
+    CameraGroup,
     CameraUpdatePayload,
     ForceSyncResult,
+    PeerZone,
     PreviewData,
     SaveZonesResponse,
     ZonesResponse,
@@ -209,4 +211,50 @@ export function toPreviewImageSrc(preview: PreviewData | null): string | null {
 
 export function toEventImageSrc(eventId: number): string {
     return `${API_BASE}/api/events/${eventId}/image?v=${Date.now()}`
+}
+
+export async function listCameraGroups(signal?: AbortSignal): Promise<CameraGroup[]> {
+    const response = await fetch(`${API_BASE}/api/camera-groups`, { cache: "no-store", signal })
+    if (!response.ok) throw new Error(`List groups failed: ${response.status}`)
+    const data = (await response.json()) as { groups: CameraGroup[] }
+    return data.groups
+}
+
+export async function createCameraGroup(payload: { name: string; cross_suppress_sec: number }): Promise<CameraGroup> {
+    const response = await fetch(`${API_BASE}/api/camera-groups`, {
+        method: "POST",
+        cache: "no-store",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+    })
+    if (!response.ok) throw new Error(`Create group failed: ${response.status}`)
+    const data = (await response.json()) as { group: CameraGroup }
+    return data.group
+}
+
+export async function updateCameraGroup(groupId: number, payload: { name?: string; cross_suppress_sec?: number }): Promise<CameraGroup> {
+    const response = await fetch(`${API_BASE}/api/camera-groups/${groupId}`, {
+        method: "PUT",
+        cache: "no-store",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+    })
+    if (!response.ok) throw new Error(`Update group failed: ${response.status}`)
+    const data = (await response.json()) as { group: CameraGroup }
+    return data.group
+}
+
+export async function deleteCameraGroup(groupId: number): Promise<void> {
+    const response = await fetch(`${API_BASE}/api/camera-groups/${groupId}`, {
+        method: "DELETE",
+        cache: "no-store",
+    })
+    if (!response.ok) throw new Error(`Delete group failed: ${response.status}`)
+}
+
+export async function fetchCameraPeerZones(cameraId: number, signal?: AbortSignal): Promise<PeerZone[]> {
+    const response = await fetch(`${API_BASE}/api/cameras/${cameraId}/peer-zones`, { cache: "no-store", signal })
+    if (!response.ok) throw new Error(`Peer zones request failed: ${response.status}`)
+    const data = (await response.json()) as { peer_zones: PeerZone[] }
+    return data.peer_zones
 }

@@ -3,7 +3,7 @@ from __future__ import annotations
 import os
 from datetime import datetime, timedelta, timezone
 
-from sqlalchemy import Boolean, DateTime, Float, Integer, String, create_engine, event, func, select, text
+from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Integer, String, create_engine, event, func, select, text
 from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column, sessionmaker
 
 from .security import decrypt_text, encrypt_text
@@ -48,6 +48,16 @@ class SyncState(Base):
     last_full_sync_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
+class CameraGroup(Base):
+    __tablename__ = "camera_groups"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    name: Mapped[str] = mapped_column(String(128), unique=True)
+    cross_suppress_sec: Mapped[int] = mapped_column(Integer, default=120)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+
+
 class Camera(Base):
     __tablename__ = "cameras"
 
@@ -59,6 +69,7 @@ class Camera(Base):
     auth_mode: Mapped[str] = mapped_column(String(32), default="digest")
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, index=True)
     sort_order: Mapped[int] = mapped_column(Integer, default=0)
+    group_id: Mapped[int | None] = mapped_column(Integer, ForeignKey("camera_groups.id", ondelete="SET NULL"), nullable=True, index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
 
@@ -77,6 +88,8 @@ class DetectionZone(Base):
     y_max: Mapped[float] = mapped_column(Float)
     is_enabled: Mapped[bool] = mapped_column(Boolean, default=True, index=True)
     sort_order: Mapped[int] = mapped_column(Integer, default=0)
+    cross_camera_enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    cross_zone_id: Mapped[int | None] = mapped_column(Integer, ForeignKey("detection_zones.id", ondelete="SET NULL"), nullable=True)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
 
 
@@ -122,6 +135,22 @@ class Database:
 
     def init(self) -> None:
         Base.metadata.create_all(self.engine)
+        self._migrate()
+
+    def _migrate(self) -> None:
+        with self.engine.connect() as conn:
+            cam_cols = {row[1] for row in conn.execute(text("PRAGMA table_info(cameras)"))}
+            if "group_id" not in cam_cols:
+                conn.execute(text("ALTER TABLE cameras ADD COLUMN group_id INTEGER REFERENCES camera_groups(id) ON DELETE SET NULL"))
+                conn.commit()
+
+            zone_cols = {row[1] for row in conn.execute(text("PRAGMA table_info(detection_zones)"))}
+            if "cross_camera_enabled" not in zone_cols:
+                conn.execute(text("ALTER TABLE detection_zones ADD COLUMN cross_camera_enabled INTEGER NOT NULL DEFAULT 1"))
+                conn.commit()
+            if "cross_zone_id" not in zone_cols:
+                conn.execute(text("ALTER TABLE detection_zones ADD COLUMN cross_zone_id INTEGER REFERENCES detection_zones(id) ON DELETE SET NULL"))
+                conn.commit()
 
     def _camera_row(self, row: Camera) -> dict[str, object]:
         return {
@@ -131,9 +160,19 @@ class Database:
             "auth_mode": row.auth_mode,
             "is_active": bool(row.is_active),
             "sort_order": int(row.sort_order),
+            "group_id": row.group_id,
             "created_at": _utc_or_now(row.created_at).isoformat(),
             "updated_at": _utc_or_now(row.updated_at).isoformat(),
             "has_credentials": bool(row.username_encrypted or row.password_encrypted),
+        }
+
+    def _group_row(self, row: CameraGroup) -> dict[str, object]:
+        return {
+            "id": row.id,
+            "name": row.name,
+            "cross_suppress_sec": int(row.cross_suppress_sec),
+            "created_at": _utc_or_now(row.created_at).isoformat(),
+            "updated_at": _utc_or_now(row.updated_at).isoformat(),
         }
 
     def list_cameras(self, is_active: bool | None = None) -> list[dict[str, object]]:
@@ -149,6 +188,61 @@ class Database:
             row = session.get(Camera, camera_id)
             return self._camera_row(row) if row is not None else None
 
+    # ------------------------------------------------------------------ groups
+
+    def list_camera_groups(self) -> list[dict[str, object]]:
+        with self.SessionLocal() as session:
+            rows = session.execute(select(CameraGroup).order_by(CameraGroup.name.asc())).scalars().all()
+            return [self._group_row(r) for r in rows]
+
+    def get_camera_group(self, group_id: int) -> dict[str, object] | None:
+        with self.SessionLocal() as session:
+            row = session.get(CameraGroup, group_id)
+            return self._group_row(row) if row is not None else None
+
+    def create_camera_group(self, *, name: str, cross_suppress_sec: int = 120) -> dict[str, object]:
+        with self.SessionLocal() as session:
+            row = CameraGroup(name=name.strip(), cross_suppress_sec=cross_suppress_sec, created_at=utc_now(), updated_at=utc_now())
+            session.add(row)
+            session.commit()
+            session.refresh(row)
+            return self._group_row(row)
+
+    def update_camera_group(
+        self,
+        group_id: int,
+        *,
+        name: str | None = None,
+        cross_suppress_sec: int | None = None,
+    ) -> dict[str, object] | None:
+        with self.SessionLocal() as session:
+            row = session.get(CameraGroup, group_id)
+            if row is None:
+                return None
+            if name is not None and name.strip():
+                row.name = name.strip()
+            if cross_suppress_sec is not None:
+                row.cross_suppress_sec = max(0, cross_suppress_sec)
+            row.updated_at = utc_now()
+            session.commit()
+            session.refresh(row)
+            return self._group_row(row)
+
+    def delete_camera_group(self, group_id: int) -> bool:
+        with self.SessionLocal() as session:
+            row = session.get(CameraGroup, group_id)
+            if row is None:
+                return False
+            session.execute(
+                text("UPDATE cameras SET group_id = NULL WHERE group_id = :gid"),
+                {"gid": group_id},
+            )
+            session.delete(row)
+            session.commit()
+            return True
+
+    # ----------------------------------------------------------------- cameras
+
     def create_camera(
         self,
         *,
@@ -160,6 +254,7 @@ class Database:
         encryption_key: str,
         is_active: bool = True,
         sort_order: int | None = None,
+        group_id: int | None = None,
     ) -> dict[str, object]:
         with self.SessionLocal() as session:
             if sort_order is None:
@@ -174,6 +269,7 @@ class Database:
                 auth_mode=auth_mode or "digest",
                 is_active=is_active,
                 sort_order=sort_order,
+                group_id=group_id,
                 created_at=utc_now(),
                 updated_at=utc_now(),
             )
@@ -194,6 +290,7 @@ class Database:
         encryption_key: str,
         is_active: bool | None = None,
         sort_order: int | None = None,
+        group_id: int | None | type[...] = ...,
     ) -> dict[str, object] | None:
         with self.SessionLocal() as session:
             row = session.get(Camera, camera_id)
@@ -214,6 +311,8 @@ class Database:
                 row.is_active = is_active
             if sort_order is not None:
                 row.sort_order = sort_order
+            if group_id is not ...:
+                row.group_id = group_id
 
             row.updated_at = utc_now()
             session.commit()
@@ -242,6 +341,99 @@ class Database:
                 decrypt_text(row.password_encrypted or "", encryption_key),
                 row.auth_mode,
             )
+
+    def get_group_peer_zones(self, camera_id: int) -> list[dict[str, object]]:
+        """Return zones from all peer cameras in the same group, with camera name attached."""
+        with self.SessionLocal() as session:
+            cam = session.get(Camera, camera_id)
+            if cam is None or cam.group_id is None:
+                return []
+            peer_cam_rows = session.execute(
+                select(Camera)
+                .where(Camera.group_id == cam.group_id)
+                .where(Camera.id != camera_id)
+                .order_by(Camera.sort_order.asc(), Camera.id.asc())
+            ).scalars().all()
+            result = []
+            for peer in peer_cam_rows:
+                zones = session.execute(
+                    select(DetectionZone)
+                    .where(DetectionZone.camera_id == peer.id)
+                    .order_by(DetectionZone.sort_order.asc(), DetectionZone.id.asc())
+                ).scalars().all()
+                for z in zones:
+                    result.append({
+                        "id": z.id,
+                        "camera_id": peer.id,
+                        "camera_name": peer.name,
+                        "name": z.name,
+                    })
+            return result
+
+    def is_cross_camera_suppressed(self, plate: str, camera_id: int, zone_id: int | None = None, max_distance: int = 0) -> bool:
+        """Return True if a peer zone (or any peer camera in the group) recently opened for this plate.
+
+        If zone_id is given and the zone has cross_camera_enabled=False → not suppressed.
+        If zone_id is given and cross_zone_id is set → check only that specific zone.
+        Otherwise → check all peer cameras in the group (group-level fallback).
+        """
+        with self.SessionLocal() as session:
+            cam = session.get(Camera, camera_id)
+            if cam is None or cam.group_id is None:
+                return False
+
+            group = session.get(CameraGroup, cam.group_id)
+            if group is None or group.cross_suppress_sec <= 0:
+                return False
+
+            cutoff = utc_now() - timedelta(seconds=group.cross_suppress_sec)
+
+            # Zone-level config
+            target_zone_ids: list[int] | None = None
+            if zone_id is not None:
+                zone_row = session.get(DetectionZone, zone_id)
+                if zone_row is not None:
+                    if not zone_row.cross_camera_enabled:
+                        return False
+                    if zone_row.cross_zone_id is not None:
+                        cross_zone = session.get(DetectionZone, zone_row.cross_zone_id)
+                        if cross_zone is None:
+                            return False
+                        target_zone_ids = [zone_row.cross_zone_id]
+
+            if target_zone_ids is None:
+                # Group-level: all peer cameras
+                peer_cameras = session.execute(
+                    select(Camera.id)
+                    .where(Camera.group_id == cam.group_id)
+                    .where(Camera.id != camera_id)
+                ).scalars().all()
+                if not peer_cameras:
+                    return False
+                stmt = (
+                    select(RecognitionEvent.plate)
+                    .where(RecognitionEvent.decision == "open")
+                    .where(RecognitionEvent.camera_id.in_(peer_cameras))
+                    .where(RecognitionEvent.occurred_at >= cutoff)
+                )
+            else:
+                stmt = (
+                    select(RecognitionEvent.plate)
+                    .where(RecognitionEvent.decision == "open")
+                    .where(RecognitionEvent.zone_id.in_(target_zone_ids))
+                    .where(RecognitionEvent.occurred_at >= cutoff)
+                )
+
+            peer_plates = session.execute(stmt).scalars().all()
+
+            if not peer_plates:
+                return False
+
+            if max_distance <= 0:
+                return plate in peer_plates
+
+            from .fuzzy_edit import levenshtein_bounded
+            return any(levenshtein_bounded(plate, p, max_distance) <= max_distance for p in peer_plates)
 
     def ping(self) -> bool:
         try:
@@ -368,6 +560,7 @@ class Database:
             stmt.delete(synchronize_session=False)
 
             for index, zone in enumerate(limited):
+                raw_cross_zone_id = zone.get("cross_zone_id")
                 session.add(
                     DetectionZone(
                         camera_id=camera_id,
@@ -380,6 +573,8 @@ class Database:
                         y_max=float(zone.get("y_max", 1.0)),
                         is_enabled=bool(zone.get("is_enabled", True)),
                         sort_order=int(zone.get("sort_order", index)),
+                        cross_camera_enabled=bool(zone.get("cross_camera_enabled", True)),
+                        cross_zone_id=int(raw_cross_zone_id) if raw_cross_zone_id is not None else None,
                         updated_at=utc_now(),
                     )
                 )
@@ -412,6 +607,8 @@ class Database:
                     "y_max": float(row.y_max),
                     "is_enabled": bool(row.is_enabled),
                     "sort_order": int(row.sort_order),
+                    "cross_camera_enabled": bool(row.cross_camera_enabled),
+                    "cross_zone_id": row.cross_zone_id,
                 }
                 for row in rows
             ]

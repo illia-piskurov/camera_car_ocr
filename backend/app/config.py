@@ -68,12 +68,6 @@ class Settings:
     barrier_action_mode: str = "mock"
     barrier_ha_base_url: str = ""
     barrier_ha_token: str = ""
-    zone1_barrier_open_entity_id: str = ""
-    zone1_barrier_close_entity_id: str = ""
-    zone1_barrier_close_delay_sec: float = 0.0
-    zone2_barrier_open_entity_id: str = ""
-    zone2_barrier_close_entity_id: str = ""
-    zone2_barrier_close_delay_sec: float = 0.0
     barrier_request_timeout_sec: float = 3.0
     barrier_request_retries: int = 2
     barrier_verify_tls: bool = True
@@ -107,21 +101,8 @@ class Settings:
     alpr_detector_providers: str = ""
     alpr_ocr_providers: str = ""
 
-    def has_zone_barrier_entities(self, zone_id: int) -> bool:
-        open_id, close_id = self.get_zone_barrier_entities(zone_id)
-        return bool(open_id and close_id)
-
-    def is_barrier_live_configured(self) -> bool:
-        if not self.barrier_ha_base_url or not self.barrier_ha_token:
-            return False
-        return self.has_zone_barrier_entities(1) or self.has_zone_barrier_entities(2)
-
-    def get_zone_barrier_entities(self, zone_id: int | None) -> tuple[str, str]:
-        if zone_id == 1:
-            return self.zone1_barrier_open_entity_id, self.zone1_barrier_close_entity_id
-        if zone_id == 2:
-            return self.zone2_barrier_open_entity_id, self.zone2_barrier_close_entity_id
-        return "", ""
+    def is_ha_configured(self) -> bool:
+        return bool(self.barrier_ha_base_url and self.barrier_ha_token)
 
     def get_camera_credentials_encryption_key(self) -> str:
         return self.camera_credentials_encryption_key
@@ -152,10 +133,6 @@ class Settings:
         return self._scoped_preview_path(self.preview_meta_path, camera_id)
 
     def get_zone_close_delay_sec(self, zone_id: int | None) -> float:
-        if zone_id == 1 and self.zone1_barrier_close_delay_sec > 0:
-            return self.zone1_barrier_close_delay_sec
-        if zone_id == 2 and self.zone2_barrier_close_delay_sec > 0:
-            return self.zone2_barrier_close_delay_sec
         return self.barrier_close_delay_sec
 
     @staticmethod
@@ -180,24 +157,6 @@ class Settings:
             barrier_action_mode=os.getenv("BARRIER_ACTION_MODE", Settings.barrier_action_mode),
             barrier_ha_base_url=os.getenv("BARRIER_HA_BASE_URL", Settings.barrier_ha_base_url),
             barrier_ha_token=os.getenv("BARRIER_HA_TOKEN", Settings.barrier_ha_token),
-            zone1_barrier_open_entity_id=os.getenv(
-                "ZONE1_BARRIER_OPEN_ENTITY_ID", Settings.zone1_barrier_open_entity_id
-            ),
-            zone1_barrier_close_entity_id=os.getenv(
-                "ZONE1_BARRIER_CLOSE_ENTITY_ID", Settings.zone1_barrier_close_entity_id
-            ),
-            zone1_barrier_close_delay_sec=float(
-                os.getenv("ZONE1_BARRIER_CLOSE_DELAY_SEC", Settings.zone1_barrier_close_delay_sec)
-            ),
-            zone2_barrier_open_entity_id=os.getenv(
-                "ZONE2_BARRIER_OPEN_ENTITY_ID", Settings.zone2_barrier_open_entity_id
-            ),
-            zone2_barrier_close_entity_id=os.getenv(
-                "ZONE2_BARRIER_CLOSE_ENTITY_ID", Settings.zone2_barrier_close_entity_id
-            ),
-            zone2_barrier_close_delay_sec=float(
-                os.getenv("ZONE2_BARRIER_CLOSE_DELAY_SEC", Settings.zone2_barrier_close_delay_sec)
-            ),
             barrier_request_timeout_sec=float(
                 os.getenv("BARRIER_REQUEST_TIMEOUT_SEC", Settings.barrier_request_timeout_sec)
             ),

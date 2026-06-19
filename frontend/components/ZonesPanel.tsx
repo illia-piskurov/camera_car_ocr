@@ -1,8 +1,9 @@
 "use client"
 
-import { useMemo } from "react"
+import { useEffect, useMemo, useState } from "react"
 import { Button } from "@/components/ui/button"
-import type { DetectionZone } from "@/lib/types"
+import { fetchCameraPeerZones } from "@/lib/api"
+import type { DetectionZone, PeerZone } from "@/lib/types"
 
 type ZonesPanelProps = {
     zones: DetectionZone[]
@@ -10,6 +11,8 @@ type ZonesPanelProps = {
     zonesDirty: boolean
     zonesSaving: boolean
     zonesMessage: string | null
+    cameraId: number | null
+    cameraGroupId: number | null
     onChangeZones: (zones: DetectionZone[]) => void
     onSaveZones: () => void
     onResetZones: () => void
@@ -41,6 +44,8 @@ export function ZonesPanel({
     zonesDirty,
     zonesSaving,
     zonesMessage,
+    cameraId,
+    cameraGroupId,
     onChangeZones,
     onSaveZones,
     onResetZones,
@@ -50,6 +55,22 @@ export function ZonesPanel({
     const visibleZones = useMemo(() => {
         return [...zones].sort((a, b) => a.sort_order - b.sort_order)
     }, [zones])
+
+    const [peerZones, setPeerZones] = useState<PeerZone[]>([])
+
+    useEffect(() => {
+        if (cameraId === null || cameraGroupId === null) {
+            setPeerZones([])
+            return
+        }
+        const controller = new AbortController()
+        fetchCameraPeerZones(cameraId, controller.signal)
+            .then(setPeerZones)
+            .catch(() => setPeerZones([]))
+        return () => controller.abort()
+    }, [cameraId, cameraGroupId])
+
+    const inGroup = cameraGroupId !== null && peerZones.length > 0
 
     const messageColor = zonesMessage?.toLowerCase().includes("saved") ? "text-emerald-300" : "text-red-300"
 
@@ -79,6 +100,8 @@ export function ZonesPanel({
                             y_max: 0.4,
                             is_enabled: true,
                             sort_order: zones.length,
+                            cross_camera_enabled: true,
+                            cross_zone_id: null,
                         }
                         onChangeZones([...zones, newZone])
                     }}
@@ -195,6 +218,46 @@ export function ZonesPanel({
                                     <p className="text-[11px] text-slate-400">
                                         If label is empty, it is auto-filled from entity IDs. Duplicate entity IDs across zones are allowed.
                                     </p>
+
+                                    {/* Cross-camera suppression config — only visible when camera is in a group with peers */}
+                                    {inGroup && (
+                                        <div className="mt-1 space-y-1.5 rounded border border-slate-600/50 bg-slate-900/40 px-2 py-2">
+                                            <p className="text-[11px] font-medium uppercase tracking-wider text-slate-400">Cross-camera</p>
+                                            <label className="flex cursor-pointer items-center gap-2 text-[11px] text-slate-300">
+                                                <input
+                                                    type="checkbox"
+                                                    checked={zone.cross_camera_enabled ?? true}
+                                                    onChange={(e) =>
+                                                        onUpdateZone(zoneIndex, (prev) => ({ ...prev, cross_camera_enabled: e.target.checked }))
+                                                    }
+                                                    className="accent-blue-500"
+                                                />
+                                                Enable suppression for this zone
+                                            </label>
+                                            {(zone.cross_camera_enabled ?? true) && (
+                                                <label className="space-y-1 text-[11px] text-slate-400">
+                                                    <span>Suppress when zone opened:</span>
+                                                    <select
+                                                        value={zone.cross_zone_id ?? ""}
+                                                        onChange={(e) =>
+                                                            onUpdateZone(zoneIndex, (prev) => ({
+                                                                ...prev,
+                                                                cross_zone_id: e.target.value ? parseInt(e.target.value) : null,
+                                                            }))
+                                                        }
+                                                        className="w-full rounded border border-slate-600 bg-slate-800 px-2 py-1 text-xs text-slate-100 outline-none focus:border-blue-400"
+                                                    >
+                                                        <option value="">Any peer camera (group-level)</option>
+                                                        {peerZones.map((pz) => (
+                                                            <option key={pz.id} value={pz.id}>
+                                                                {pz.camera_name} · {pz.name}
+                                                            </option>
+                                                        ))}
+                                                    </select>
+                                                </label>
+                                            )}
+                                        </div>
+                                    )}
                                 </div>
                             </div>
                         )

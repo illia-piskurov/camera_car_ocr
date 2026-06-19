@@ -130,6 +130,8 @@ export function ZoneEditor({ imageSrc, zones, maxZones, onChangeZones }: ZoneEdi
             y_max: rect.y_max,
             is_enabled: true,
             sort_order: zones.length,
+            cross_camera_enabled: true,
+            cross_zone_id: null,
         }
 
         onChangeZones([...zones, nextZone])
