@@ -336,7 +336,7 @@ pub fn run() {
             log::info!("Spawning SSE task…");
             let app_handle = app.handle().clone();
             let url_arc = app.state::<AppState>().backend_url.clone();
-            tokio::spawn(sse_loop(app_handle, url_arc));
+            tauri::async_runtime::spawn(sse_loop(app_handle, url_arc));
 
             log::info!("setup() completed — app is running in tray");
             Ok(())
