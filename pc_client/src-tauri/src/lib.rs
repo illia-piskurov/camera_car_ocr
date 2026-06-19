@@ -246,7 +246,7 @@ pub fn run() {
             let menu = Menu::with_items(app, &[&item_settings, &sep, &item_quit])?;
 
             TrayIconBuilder::new()
-                .icon(app.default_window_icon().unwrap().clone())
+                .icon(app.default_window_icon().cloned().expect("no app icon configured"))
                 .tooltip("ALPR Монітор")
                 .menu(&menu)
                 .show_menu_on_left_click(false)
@@ -290,6 +290,13 @@ pub fn run() {
                 }
             }
         })
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application")
+        .run(|_app, event| {
+            // Prevent Tauri from exiting when all windows are hidden.
+            // The app lives in the tray — only "Вийти" should kill the process.
+            if let tauri::RunEvent::ExitRequested { api, .. } = event {
+                api.prevent_exit();
+            }
+        });
 }
