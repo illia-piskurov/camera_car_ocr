@@ -104,3 +104,81 @@ If Home Assistant is unavailable or token is invalid, backend logs warning and k
 - Opens only for whitelist plates.
 - On uncertainty or errors, the system does not open the barrier.
 - While barrier is open, same-zone detections keep it open by refreshing close deadline.
+
+---
+
+## Autostart via systemd (Linux / Proxmox)
+
+Service files are stored in `systemd/` in the repo root. They are **templates** — copy them
+to `/etc/systemd/system/` to install.
+
+### Services
+
+| Service | What it runs |
+|---|---|
+| `camera-car-api` | `uv run uvicorn app.api_server:app --host 0.0.0.0 --port 8000 --reload` |
+| `camera-car-worker` | `uv run python main.py` (orchestrator + ALPR) |
+| `camera-car-frontend` | `npm run dev` (Next.js dashboard) |
+
+### Install (first time)
+
+```bash
+cp systemd/*.service /etc/systemd/system/
+systemctl daemon-reload
+systemctl enable camera-car-api camera-car-worker camera-car-frontend
+systemctl start  camera-car-api camera-car-worker camera-car-frontend
+```
+
+### Restart after code changes
+
+API server (`--reload` перезагружает Python-файлы автоматически, но если не помогло):
+```bash
+systemctl restart camera-car-api
+```
+
+Worker (основная логика, ALPR, оркестратор — всегда нужен рестарт):
+```bash
+systemctl restart camera-car-worker
+```
+
+Перезапустить всё сразу:
+```bash
+systemctl restart camera-car-api camera-car-worker camera-car-frontend
+```
+
+### Status & logs
+
+```bash
+# Статус всех трёх
+systemctl status camera-car-api camera-car-worker camera-car-frontend
+
+# Логи в реальном времени
+journalctl -u camera-car-worker -f
+journalctl -u camera-car-api -f
+journalctl -u camera-car-frontend -f
+
+# Последние 100 строк
+journalctl -u camera-car-worker -n 100
+```
+
+### Stop / disable autostart
+
+```bash
+systemctl stop    camera-car-api camera-car-worker camera-car-frontend
+systemctl disable camera-car-api camera-car-worker camera-car-frontend
+```
+
+### Autoboot after power loss
+
+Убедись что в BIOS/UEFI выставлено **AC Power Recovery → Power On** (или
+"Restore on AC Power Loss = On"). Тогда при включении света Proxmox поднимется
+сам, а systemd запустит все три сервиса автоматически.
+
+### Update service files
+
+Если изменил файл в `systemd/` — скопируй его заново и перезагрузи конфиг:
+```bash
+cp systemd/camera-car-worker.service /etc/systemd/system/
+systemctl daemon-reload
+systemctl restart camera-car-worker
+```

@@ -142,6 +142,23 @@ def execute_barrier_action(
         )
         return
 
+    # Suppress open if another zone sharing the same entity is already open.
+    # Prevents double-press on toggle/impulse buttons (KNX) when multiple zones
+    # are mapped to the same physical barrier entity.
+    this_entity = barrier.zone_open_entity_ids.get(zone_id, "") if zone_id is not None else ""
+    if this_entity:
+        for other_zone_id, other_state in zone_states.items():
+            if other_zone_id != zone_id and other_state.is_open:
+                other_entity = barrier.zone_open_entity_ids.get(other_zone_id, "")
+                if other_entity == this_entity:
+                    LOG.info(
+                        "Barrier open suppressed: entity=%s already open via zone=%s plate=%s",
+                        this_entity,
+                        other_zone_id,
+                        plate,
+                    )
+                    return
+
     # Attempt barrier open
     opened = False
     try:

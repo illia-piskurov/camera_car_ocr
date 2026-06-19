@@ -28,20 +28,41 @@ class PipelineState:
     def close_all_zones(self, barrier: BarrierController) -> None:
         """Close all currently open zones.
 
+        Deduplicates close commands by entity_id so that multiple zones mapped
+        to the same toggle/impulse button (e.g. KNX) only send one press.
+
         Args:
             barrier: BarrierController instance to send close commands.
         """
+        import logging
+        LOG = logging.getLogger(__name__)
+
         now_monotonic = time.monotonic()
+        closed_entities: set[str] = set()
+
         for zone_id, state in self.zone_states.items():
             deadline = state.close_deadline_monotonic
             if deadline is None or now_monotonic < deadline:
                 continue
 
+            entity_id = (
+                barrier.zone_close_entity_ids.get(zone_id, "")
+                if zone_id is not None
+                else ""
+            )
+
             try:
-                barrier.close(reason="auto_close_timer", plate=state.last_plate, zone_id=zone_id)
+                if entity_id and entity_id in closed_entities:
+                    LOG.info(
+                        "Barrier close suppressed: entity=%s already closed this cycle zone=%s",
+                        entity_id,
+                        zone_id,
+                    )
+                else:
+                    barrier.close(reason="auto_close_timer", plate=state.last_plate, zone_id=zone_id)
+                    if entity_id:
+                        closed_entities.add(entity_id)
             except (IOError, TimeoutError) as exc:
-                import logging
-                LOG = logging.getLogger(__name__)
                 LOG.warning(
                     "Barrier close call failed plate=%s zone=%s reason=auto_close_timer: %s",
                     state.last_plate,

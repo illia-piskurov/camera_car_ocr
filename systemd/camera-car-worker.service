@@ -1,0 +1,15 @@
+[Unit]
+Description=Camera Car OCR - Background Worker (orchestrator)
+After=network.target camera-car-api.service
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/root/camera_car_ocr/backend
+Environment="PATH=/root/.local/bin:/usr/local/bin:/usr/bin:/bin"
+ExecStart=/root/.local/bin/uv run python main.py
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,16 @@
+[Unit]
+Description=Camera Car OCR - Frontend (Next.js)
+After=network.target camera-car-api.service
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/root/camera_car_ocr/frontend
+Environment="PATH=/usr/local/bin:/usr/bin:/bin"
+Environment="NODE_ENV=development"
+ExecStart=/usr/bin/npm run dev
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

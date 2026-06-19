@@ -78,11 +78,14 @@ class BarrierController:
 
         Supported domains:
           input_button.*  → input_button/press  (for both open and close)
+          button.*        → button/press         (for both open and close)
           switch.*        → switch/turn_on  (open) / switch/turn_off  (close)
         """
         domain = entity_id.split(".", 1)[0] if "." in entity_id else ""
         if domain == "switch":
             return "switch/turn_on" if action == "open" else "switch/turn_off"
+        if domain == "button":
+            return "button/press"
         # Default: input_button/press (works for input_button.* and unknown domains)
         return "input_button/press"
 
