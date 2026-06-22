@@ -79,18 +79,26 @@ struct PersistedSettings {
     backend_url: String,
     #[serde(default = "default_window_size_str")]
     window_size: String,
+    #[serde(default = "default_display_time")]
+    display_time: u32,
 }
-fn default_backend_url() -> String { DEFAULT_BACKEND_URL.to_string() }
+fn default_backend_url()    -> String { DEFAULT_BACKEND_URL.to_string() }
 fn default_window_size_str() -> String { DEFAULT_WINDOW_SIZE.to_string() }
+fn default_display_time()   -> u32    { 30 }
 impl Default for PersistedSettings {
     fn default() -> Self {
-        Self { backend_url: default_backend_url(), window_size: default_window_size_str() }
+        Self {
+            backend_url:  default_backend_url(),
+            window_size:  default_window_size_str(),
+            display_time: default_display_time(),
+        }
     }
 }
 
 struct AppState {
-    backend_url: Arc<Mutex<String>>,
-    window_size: Arc<Mutex<String>>,
+    backend_url:   Arc<Mutex<String>>,
+    window_size:   Arc<Mutex<String>>,
+    display_time:  Arc<Mutex<u32>>,
     sse_connected: Arc<Mutex<bool>>,
 }
 
@@ -130,8 +138,9 @@ fn get_settings(state: tauri::State<AppState>) -> String {
 fn save_settings(url: String, state: tauri::State<AppState>, app: AppHandle) {
     *state.backend_url.lock().unwrap() = url.clone();
     persist_settings(&app, &PersistedSettings {
-        backend_url: url,
-        window_size: state.window_size.lock().unwrap().clone(),
+        backend_url:  url,
+        window_size:  state.window_size.lock().unwrap().clone(),
+        display_time: *state.display_time.lock().unwrap(),
     });
 }
 
@@ -144,8 +153,24 @@ fn get_window_size(state: tauri::State<AppState>) -> String {
 fn save_window_size(size: String, state: tauri::State<AppState>, app: AppHandle) {
     *state.window_size.lock().unwrap() = size.clone();
     persist_settings(&app, &PersistedSettings {
-        backend_url: state.backend_url.lock().unwrap().clone(),
-        window_size: size,
+        backend_url:  state.backend_url.lock().unwrap().clone(),
+        window_size:  size,
+        display_time: *state.display_time.lock().unwrap(),
+    });
+}
+
+#[tauri::command]
+fn get_display_time(state: tauri::State<AppState>) -> u32 {
+    *state.display_time.lock().unwrap()
+}
+
+#[tauri::command]
+fn save_display_time(seconds: u32, state: tauri::State<AppState>, app: AppHandle) {
+    *state.display_time.lock().unwrap() = seconds;
+    persist_settings(&app, &PersistedSettings {
+        backend_url:  state.backend_url.lock().unwrap().clone(),
+        window_size:  state.window_size.lock().unwrap().clone(),
+        display_time: seconds,
     });
 }
 
@@ -169,7 +194,7 @@ fn ensure_alert_window(app: &AppHandle, size: &str) -> tauri::WebviewWindow {
         .decorations(false)
         .always_on_top(true)
         .skip_taskbar(true)
-        .resizable(false)
+        .resizable(true)
         .visible(true)
         .transparent(true)
         .build()
@@ -340,6 +365,7 @@ pub fn run() {
         .manage(AppState {
             backend_url:   Arc::new(Mutex::new(DEFAULT_BACKEND_URL.to_string())),
             window_size:   Arc::new(Mutex::new(DEFAULT_WINDOW_SIZE.to_string())),
+            display_time:  Arc::new(Mutex::new(30u32)),
             sse_connected: Arc::new(Mutex::new(false)),
         })
         .invoke_handler(tauri::generate_handler![
@@ -347,14 +373,17 @@ pub fn run() {
             save_settings,
             get_window_size,
             save_window_size,
+            get_display_time,
+            save_display_time,
             get_sse_status,
         ])
         .setup(|app| {
             let saved = load_settings(app.handle());
             log::info!("Loaded settings: url={} size={}", saved.backend_url, saved.window_size);
 
-            *app.state::<AppState>().backend_url.lock().unwrap()   = saved.backend_url;
-            *app.state::<AppState>().window_size.lock().unwrap()   = saved.window_size.clone();
+            *app.state::<AppState>().backend_url.lock().unwrap()  = saved.backend_url;
+            *app.state::<AppState>().window_size.lock().unwrap()  = saved.window_size.clone();
+            *app.state::<AppState>().display_time.lock().unwrap() = saved.display_time;
 
             let item_settings = MenuItem::with_id(app, "settings", "Налаштування", true, None::<&str>)?;
             let sep           = PredefinedMenuItem::separator(app)?;

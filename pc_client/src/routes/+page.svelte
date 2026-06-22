@@ -9,33 +9,34 @@
   // ── Types ──────────────────────────────────────────────────────────────────
 
   type CardClass = "open" | "deny";
-  type SizeKey = "small" | "medium" | "large";
+  type SizeKey   = "small" | "medium" | "large";
 
   type Card = {
-    uid: string;
-    plate: string;
-    label: string;
-    reason: string;
-    time: string;
-    zone: string;
-    cardClass: CardClass;
+    uid: string; plate: string; label: string;
+    reason: string; time: string; zone: string; cardClass: CardClass;
   };
 
-  const SIZES: Record<SizeKey, { w: number; h: number; fs: number }> = {
-    small:  { w: 280, h: 110, fs: 11.5 },
-    medium: { w: 340, h: 140, fs: 14   },
-    large:  { w: 430, h: 175, fs: 17.5 },
+  // px values per size setting
+  const SIZES: Record<SizeKey, { w: number; hCompact: number; hExpanded: number; fs: number }> = {
+    small:  { w: 280, hCompact: 38,  hExpanded: 110, fs: 11.5 },
+    medium: { w: 340, hCompact: 46,  hExpanded: 140, fs: 14   },
+    large:  { w: 430, hCompact: 58,  hExpanded: 175, fs: 17.5 },
   };
 
   // ── State ──────────────────────────────────────────────────────────────────
 
-  let card = $state<Card | null>(null);
-  let sseConnected = $state(false);
-  let sseMessage   = $state("Підключення…");
-  let fontSize     = $state(14);
+  let card           = $state<Card | null>(null);
+  let sseConnected   = $state(false);
+  let fontSize       = $state(14);
+  let sizeKey        = $state<SizeKey>("medium");
+  let displayTimeSec = $state(30);
   let dismissTimer: ReturnType<typeof setTimeout> | null = null;
 
-  // ── Reason code → Ukrainian ────────────────────────────────────────────────
+  // Screen info cached for repositioning
+  let screenW = 0;
+  let screenH = 0;
+
+  // ── Reason codes ───────────────────────────────────────────────────────────
 
   const REASONS: Record<string, string> = {
     open_approved:           "Номер знайдено в базі дозволених",
@@ -50,6 +51,23 @@
     });
   }
 
+  // ── Window resize ──────────────────────────────────────────────────────────
+
+  async function resizeWindow(hasCard: boolean) {
+    if (!screenW || !screenH) return;
+    const s = SIZES[sizeKey];
+    const h = hasCard ? s.hExpanded : s.hCompact;
+    try {
+      await appWindow.setSize(new LogicalSize(s.w, h));
+      await appWindow.setPosition(new LogicalPosition(screenW - s.w - 12, screenH - h - 62));
+    } catch (e) { /* ignore */ }
+  }
+
+  // Reactive: resize whenever card appears or disappears
+  $effect(() => {
+    void resizeWindow(card !== null);
+  });
+
   // ── Event handler ──────────────────────────────────────────────────────────
 
   function onRecognition(event: Record<string, unknown>) {
@@ -59,39 +77,19 @@
     if (dismissTimer) { clearTimeout(dismissTimer); dismissTimer = null; }
 
     card = {
-      uid:      `${event.id}-${Date.now()}`,
-      plate:    String(event.plate || event.raw_plate || ""),
-      label:    decision === "open" ? "ВІДКРИТО" : "ВІДМОВЛЕНО",
-      reason:   REASONS[reason_code] ?? reason_code,
-      time:     fmtTime(String(event.occurred_at ?? "")),
-      zone:     String(event.zone_name ?? ""),
+      uid:       `${event.id}-${Date.now()}`,
+      plate:     String(event.plate || event.raw_plate || ""),
+      label:     decision === "open" ? "ВІДКРИТО" : "ВІДМОВЛЕНО",
+      reason:    REASONS[reason_code] ?? reason_code,
+      time:      fmtTime(String(event.occurred_at ?? "")),
+      zone:      String(event.zone_name ?? ""),
       cardClass: decision === "open" ? "open" : "deny",
     };
 
-    dismissTimer = setTimeout(() => { card = null; }, 30_000);
+    dismissTimer = setTimeout(() => { card = null; }, displayTimeSec * 1000);
   }
 
-  // ── Apply window size ──────────────────────────────────────────────────────
-
-  async function applySize(key: string) {
-    const s = SIZES[(key as SizeKey)] ?? SIZES.medium;
-    fontSize = s.fs;
-
-    try {
-      await appWindow.setSize(new LogicalSize(s.w, s.h));
-      const monitor = await appWindow.currentMonitor();
-      if (monitor) {
-        const scale = monitor.scaleFactor;
-        const sw = monitor.size.width  / scale;
-        const sh = monitor.size.height / scale;
-        await appWindow.setPosition(new LogicalPosition(sw - s.w - 12, sh - s.h - 62));
-      }
-    } catch (e) {
-      console.warn("resize failed", e);
-    }
-  }
-
-  // ── Listeners ──────────────────────────────────────────────────────────────
+  // ── Init ───────────────────────────────────────────────────────────────────
 
   let unlistenEvent:  (() => void) | null = null;
   let unlistenStatus: (() => void) | null = null;
@@ -102,17 +100,28 @@
     });
     unlistenStatus = await listen<{ connected: boolean; message: string }>("sse-status", (e) => {
       sseConnected = e.payload.connected;
-      sseMessage   = e.payload.message;
     });
 
-    // Sync initial SSE state (event may have fired before listener was ready)
-    const connected: boolean = await invoke("get_sse_status");
-    sseConnected = connected;
-    if (connected) sseMessage = "Підключено";
+    // Sync initial SSE state (event may fire before listener is ready)
+    sseConnected = await invoke<boolean>("get_sse_status");
 
-    // Apply saved size
-    const savedSize: string = await invoke("get_window_size");
-    await applySize(savedSize);
+    // Load saved settings
+    displayTimeSec = await invoke<number>("get_display_time");
+    const savedSize = await invoke<string>("get_window_size") as SizeKey;
+    sizeKey  = savedSize;
+    fontSize = SIZES[savedSize]?.fs ?? 14;
+
+    // Cache screen dimensions and do initial resize
+    try {
+      const monitor = await appWindow.currentMonitor();
+      if (monitor) {
+        const scale = monitor.scaleFactor;
+        screenW = monitor.size.width  / scale;
+        screenH = monitor.size.height / scale;
+      }
+    } catch (_) {}
+
+    await resizeWindow(false);
   });
 
   onDestroy(() => {
@@ -123,7 +132,6 @@
 </script>
 
 <div class="wrapper" style="font-size: {fontSize}px">
-  <!-- ── Event card (shown 30 s after last event) ── -->
   {#if card}
     {#key card.uid}
       <div class="card {card.cardClass}">
@@ -143,11 +151,10 @@
     {/key}
   {/if}
 
-  <!-- ── Status bar (always visible, sticks to bottom) ── -->
   <div class="statusbar">
     <span class="dot" class:ok={sseConnected}></span>
     <span class="statusbar-text">
-      {sseConnected ? "ALPR Монітор — очікування" : sseMessage}
+      {sseConnected ? "Система розпізнавання працює" : "З'єднання відсутнє"}
     </span>
   </div>
 </div>
@@ -166,7 +173,7 @@
   .wrapper {
     display: flex;
     flex-direction: column;
-    justify-content: flex-end;   /* все контент тягнемо до низу */
+    justify-content: flex-end;
     height: 100vh;
     padding: 0.4em;
     gap: 0.4em;
@@ -182,6 +189,7 @@
     border-radius: 0.6em;
     padding: 0.5em 0.85em;
     backdrop-filter: blur(12px);
+    flex-shrink: 0;
   }
 
   .dot {
@@ -189,14 +197,14 @@
     height: 0.57em;
     border-radius: 50%;
     flex-shrink: 0;
-    background: #475569;
+    background: #ef4444;
     transition: background 0.4s;
   }
   .dot.ok { background: #22c55e; }
 
   .statusbar-text {
     font-size: 0.79em;
-    color: #64748b;
+    color: #94a3b8;
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
@@ -211,6 +219,7 @@
     box-shadow: 0 6px 32px rgba(0,0,0,0.6), 0 1px 0 rgba(255,255,255,0.04) inset;
     overflow: hidden;
     border: 1px solid rgba(255,255,255,0.07);
+    flex-shrink: 0;
   }
 
   .card.open { animation: slide-in 0.15s ease-out, blink-green 0.9s ease-out 0.15s; }
@@ -220,29 +229,25 @@
     from { opacity: 0; transform: translateX(1.5em); }
     to   { opacity: 1; transform: translateX(0); }
   }
-
   @keyframes blink-green {
-    0%   { background: rgba(13, 17, 27, 0.96); }
-    20%  { background: rgba(34, 197, 94, 0.45); }
-    40%  { background: rgba(13, 17, 27, 0.96); }
-    65%  { background: rgba(34, 197, 94, 0.30); }
-    100% { background: rgba(13, 17, 27, 0.96); }
+    0%   { background: rgba(13,17,27,0.96); }
+    20%  { background: rgba(34,197,94,0.45); }
+    40%  { background: rgba(13,17,27,0.96); }
+    65%  { background: rgba(34,197,94,0.30); }
+    100% { background: rgba(13,17,27,0.96); }
   }
-
   @keyframes blink-red {
-    0%   { background: rgba(13, 17, 27, 0.96); }
-    20%  { background: rgba(239, 68, 68, 0.45); }
-    40%  { background: rgba(13, 17, 27, 0.96); }
-    65%  { background: rgba(239, 68, 68, 0.30); }
-    100% { background: rgba(13, 17, 27, 0.96); }
+    0%   { background: rgba(13,17,27,0.96); }
+    20%  { background: rgba(239,68,68,0.45); }
+    40%  { background: rgba(13,17,27,0.96); }
+    65%  { background: rgba(239,68,68,0.30); }
+    100% { background: rgba(13,17,27,0.96); }
   }
 
-  /* ── Accent bar ── */
   .accent-bar { width: 0.36em; flex-shrink: 0; }
   .card.open .accent-bar { background: #22c55e; }
   .card.deny .accent-bar { background: #ef4444; }
 
-  /* ── Body ── */
   .body { padding: 0.72em 0.93em 0.65em; flex: 1; min-width: 0; }
 
   .header {
