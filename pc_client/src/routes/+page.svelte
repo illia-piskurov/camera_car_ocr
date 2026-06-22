@@ -159,12 +159,31 @@
     box-shadow: 0 6px 32px rgba(0, 0, 0, 0.6), 0 1px 0 rgba(255,255,255,0.04) inset;
     overflow: hidden;
     border: 1px solid rgba(255, 255, 255, 0.07);
-    animation: slide-in 0.2s ease-out;
+    animation: slide-in 0.15s ease-out;
   }
+
+  .card.open { animation: slide-in 0.15s ease-out, blink-green 0.9s ease-out 0.15s; }
+  .card.deny { animation: slide-in 0.15s ease-out, blink-red   0.9s ease-out 0.15s; }
 
   @keyframes slide-in {
     from { opacity: 0; transform: translateX(24px); }
     to   { opacity: 1; transform: translateX(0); }
+  }
+
+  @keyframes blink-green {
+    0%   { background: rgba(13, 17, 27, 0.96); }
+    20%  { background: rgba(34, 197, 94, 0.45); }
+    40%  { background: rgba(13, 17, 27, 0.96); }
+    65%  { background: rgba(34, 197, 94, 0.30); }
+    100% { background: rgba(13, 17, 27, 0.96); }
+  }
+
+  @keyframes blink-red {
+    0%   { background: rgba(13, 17, 27, 0.96); }
+    20%  { background: rgba(239, 68, 68, 0.45); }
+    40%  { background: rgba(13, 17, 27, 0.96); }
+    65%  { background: rgba(239, 68, 68, 0.30); }
+    100% { background: rgba(13, 17, 27, 0.96); }
   }
 
   /* ── Accent bar (left stripe) ── */
