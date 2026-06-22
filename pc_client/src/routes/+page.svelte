@@ -2,9 +2,6 @@
   import { onMount, onDestroy } from "svelte";
   import { listen } from "@tauri-apps/api/event";
   import { invoke } from "@tauri-apps/api/core";
-  import { getCurrentWindow, LogicalSize, LogicalPosition } from "@tauri-apps/api/window";
-
-  const appWindow = getCurrentWindow();
 
   // ── Types ──────────────────────────────────────────────────────────────────
 
@@ -16,14 +13,8 @@
     reason: string; time: string; zone: string; cardClass: CardClass;
   };
 
-  // px values per size setting.
-  // hExpanded is intentionally larger than card+statusbar so there are ~14px of
-  // transparent space above the card — the "frame sticking out above notification".
-  const SIZES: Record<SizeKey, { w: number; hCompact: number; hExpanded: number; fs: number }> = {
-    small:  { w: 280, hCompact: 38,  hExpanded: 128, fs: 11.5 },
-    medium: { w: 340, hCompact: 46,  hExpanded: 158, fs: 14   },
-    large:  { w: 430, hCompact: 58,  hExpanded: 196, fs: 17.5 },
-  };
+  // Font size per window size (px). Dimensions live in Rust — compact_dims / expanded_dims.
+  const FS: Record<SizeKey, number> = { small: 11.5, medium: 14, large: 17.5 };
 
   // ── State ──────────────────────────────────────────────────────────────────
 
@@ -33,10 +24,6 @@
   let sizeKey        = $state<SizeKey>("medium");
   let displayTimeSec = $state(30);
   let dismissTimer: ReturnType<typeof setTimeout> | null = null;
-
-  // $state so that the $effect re-runs once onMount resolves the monitor dimensions
-  let screenW = $state(0);
-  let screenH = $state(0);
 
   // ── Reason codes ───────────────────────────────────────────────────────────
 
@@ -53,22 +40,13 @@
     });
   }
 
-  // ── Window resize ──────────────────────────────────────────────────────────
+  // ── Window resize — delegated to Rust to avoid WebView2 DPI issues ─────────
 
-  async function resizeWindow(hasCard: boolean) {
-    if (!screenW || !screenH) return;
-    const s = SIZES[sizeKey];
-    const h = hasCard ? s.hExpanded : s.hCompact;
-    try {
-      await appWindow.setSize(new LogicalSize(s.w, h));
-      await appWindow.setPosition(new LogicalPosition(screenW - s.w - 12, screenH - h - 62));
-    } catch (e) { /* ignore */ }
+  function resizeWindow(hasCard: boolean): void {
+    invoke("resize_alert_window", { hasCard, sizeKey }).catch(
+      (e) => console.error("resize_alert_window failed:", e)
+    );
   }
-
-  // Reactive: resize whenever card appears or disappears
-  $effect(() => {
-    void resizeWindow(card !== null);
-  });
 
   // ── Event handler ──────────────────────────────────────────────────────────
 
@@ -88,10 +66,10 @@
       cardClass: decision === "open" ? "open" : "deny",
     };
 
-    void resizeWindow(true);
+    resizeWindow(true);
     dismissTimer = setTimeout(() => {
       card = null;
-      void resizeWindow(false);
+      resizeWindow(false);
     }, displayTimeSec * 1000);
   }
 
@@ -115,19 +93,10 @@
     displayTimeSec = await invoke<number>("get_display_time");
     const savedSize = await invoke<string>("get_window_size") as SizeKey;
     sizeKey  = savedSize;
-    fontSize = SIZES[savedSize]?.fs ?? 14;
+    fontSize = FS[savedSize] ?? 14;
 
-    // Cache screen dimensions and do initial resize
-    try {
-      const monitor = await appWindow.currentMonitor();
-      if (monitor) {
-        const scale = monitor.scaleFactor;
-        screenW = monitor.size.width  / scale;
-        screenH = monitor.size.height / scale;
-      }
-    } catch (_) {}
-
-    await resizeWindow(false);
+    // Shrink window to compact (status-bar only) on startup
+    resizeWindow(false);
   });
 
   onDestroy(() => {

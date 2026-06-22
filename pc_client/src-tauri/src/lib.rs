@@ -39,11 +39,19 @@ const DEFAULT_WINDOW_SIZE: &str = "medium";
 const ALERT_LABEL: &str = "alert";
 const SETTINGS_LABEL: &str = "settings";
 
-fn size_dims(size: &str) -> (f64, f64) {
+fn expanded_dims(size: &str) -> (f64, f64) {
     match size {
         "small" => (280.0, 128.0),
         "large"  => (430.0, 196.0),
         _        => (340.0, 158.0),
+    }
+}
+
+fn compact_dims(size: &str) -> (f64, f64) {
+    match size {
+        "small" => (280.0, 38.0),
+        "large"  => (430.0, 58.0),
+        _        => (340.0, 46.0),
     }
 }
 
@@ -179,6 +187,27 @@ fn get_sse_status(state: tauri::State<AppState>) -> bool {
     *state.sse_connected.lock().unwrap()
 }
 
+#[tauri::command]
+fn resize_alert_window(has_card: bool, size_key: String, app: AppHandle) {
+    let Some(win) = app.get_webview_window(ALERT_LABEL) else {
+        log::warn!("resize_alert_window: alert window not found");
+        return;
+    };
+    let (w, h) = if has_card { expanded_dims(&size_key) } else { compact_dims(&size_key) };
+    log::info!("resize_alert_window: has_card={has_card} size={size_key} → {w}×{h}");
+    win.set_size(tauri::LogicalSize::new(w, h)).ok();
+    match win.primary_monitor() {
+        Ok(Some(monitor)) => {
+            let scale = monitor.scale_factor();
+            let sw = monitor.size().width as f64 / scale;
+            let sh = monitor.size().height as f64 / scale;
+            win.set_position(tauri::LogicalPosition::new(sw - w - 12.0, sh - h - 62.0)).ok();
+        }
+        Ok(None) => log::warn!("resize_alert_window: primary_monitor() returned None"),
+        Err(e)   => log::warn!("resize_alert_window: primary_monitor() error: {e}"),
+    }
+}
+
 // ── Window helpers ─────────────────────────────────────────────────────────────
 
 fn ensure_alert_window(app: &AppHandle, size: &str) -> tauri::WebviewWindow {
@@ -186,7 +215,7 @@ fn ensure_alert_window(app: &AppHandle, size: &str) -> tauri::WebviewWindow {
         return win;
     }
 
-    let (w, h) = size_dims(size);
+    let (w, h) = expanded_dims(size);
     log::info!("Creating alert window ({w}×{h}, size={size})…");
     match WebviewWindowBuilder::new(app, ALERT_LABEL, WebviewUrl::App("/".into()))
         .title("ALPR Монітор")
@@ -376,6 +405,7 @@ pub fn run() {
             get_display_time,
             save_display_time,
             get_sse_status,
+            resize_alert_window,
         ])
         .setup(|app| {
             let saved = load_settings(app.handle());
