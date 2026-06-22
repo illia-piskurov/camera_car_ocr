@@ -332,7 +332,7 @@ pub fn run() {
                 .show_menu_on_left_click(false)
                 .on_menu_event(|app, event| match event.id.as_ref() {
                     "settings" => open_settings_window(app),
-                    "quit" => app.exit(0),
+                    "quit" => std::process::exit(0),
                     _ => {}
                 })
                 .on_tray_icon_event(|_tray, event| {
