@@ -796,6 +796,11 @@ class Database:
                 })
             return result
 
+    def get_max_event_id(self) -> int:
+        with self.SessionLocal() as session:
+            result = session.execute(select(func.max(RecognitionEvent.id))).scalar()
+            return int(result) if result is not None else 0
+
     def get_event_frame_id(self, event_id: int) -> str | None:
         with self.SessionLocal() as session:
             row = session.get(RecognitionEvent, event_id)

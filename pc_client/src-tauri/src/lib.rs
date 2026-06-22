@@ -191,13 +191,34 @@ fn parse_sse_block(block: &str) -> Option<RecognitionEvent> {
         .and_then(|data| serde_json::from_str(data.trim()).ok())
 }
 
+async fn fetch_start_id(client: &Client, base: &str) -> i64 {
+    let url = format!("{}/api/events/latest-id", base);
+    match client.get(&url).send().await {
+        Ok(r) if r.status().is_success() => r
+            .json::<serde_json::Value>().await
+            .ok()
+            .and_then(|v| v.get("id").and_then(|id| id.as_i64()))
+            .unwrap_or(0),
+        _ => 0,
+    }
+}
+
 async fn sse_loop(app: AppHandle, backend_url: Arc<Mutex<String>>) {
     log::info!("SSE loop started");
     let client = Client::new();
     let mut last_id: i64 = 0;
+    let mut last_base = String::new();
 
     loop {
         let base = backend_url.lock().unwrap().clone();
+
+        // On first connect or URL change — skip all historical events
+        if base != last_base {
+            last_id = fetch_start_id(&client, &base).await;
+            last_base = base.clone();
+            log::info!("SSE starting from event id={last_id} (skipping history)");
+        }
+
         let url = format!("{}/api/events/stream?after_id={}", base, last_id);
         log::info!("SSE connecting to {url}");
 

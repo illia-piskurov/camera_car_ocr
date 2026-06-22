@@ -428,6 +428,11 @@ def list_events(
     }
 
 
+@app.get("/api/events/latest-id")
+def latest_event_id() -> dict[str, object]:
+    return {"id": db.get_max_event_id()}
+
+
 @app.get("/api/events/stream")
 async def stream_events(
     request: Request,

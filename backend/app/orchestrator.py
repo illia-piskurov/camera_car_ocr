@@ -20,7 +20,6 @@ from .logging_utils import configure_logging
 from .onec_provider import WhitelistProvider, create_whitelist_provider
 from .pipeline_state import PipelineState
 from .preview_pipeline import write_preview_artifacts, write_recognition_snapshot
-from .runtime_state import ZoneRuntimeState
 from .types import PlateDetection
 from .zones import crop_zone, draw_zones, paste_zone_image
 from . import stages
@@ -188,7 +187,7 @@ def _handle_detections(
     db: Database,
     cfg: Settings,
     barrier: BarrierController,
-    zone_states: dict[int | None, ZoneRuntimeState],
+    state: PipelineState,
     camera_id: int | None = None,
 ) -> DetectionStageResult:
     result = DetectionStageResult(
@@ -200,14 +199,16 @@ def _handle_detections(
     )
 
     for detection in detections:
-        # Record raw detection event
-        stages.record_decision_event(
-            detection=detection,
-            decision="observed",
-            reason_code="raw_detection",
-            db=db,
-            camera_id=camera_id,
-        )
+        plate = detection.normalized_text or detection.raw_text
+        if not state.is_observed_suppressed(plate, detection.zone_id):
+            stages.record_decision_event(
+                detection=detection,
+                decision="observed",
+                reason_code="raw_detection",
+                db=db,
+                camera_id=camera_id,
+            )
+            state.mark_observed(plate, detection.zone_id)
 
     if decision_detection is None:
         return result
@@ -228,13 +229,20 @@ def _handle_detections(
     result.frame_last_zone = decision_detection.zone_name
     result.snapshot_source_detection = decision_detection
 
-    stages.record_decision_event(
-        detection=decision_detection,
-        decision=result.frame_last_decision,
-        reason_code=reason_code,
-        db=db,
-        camera_id=camera_id,
-    )
+    plate = decision_detection.normalized_text
+    zone_id = decision_detection.zone_id
+
+    # Open events: always record. Deny events: suppress if same plate seen recently.
+    if should_open or not state.is_deny_suppressed(plate, zone_id):
+        stages.record_decision_event(
+            detection=decision_detection,
+            decision=result.frame_last_decision,
+            reason_code=reason_code,
+            db=db,
+            camera_id=camera_id,
+        )
+        if not should_open:
+            state.mark_deny(plate, zone_id)
 
     LOG.info(
         "Decision plate=%s ocr_conf=%.3f decision=%s reason=%s",
@@ -250,7 +258,7 @@ def _handle_detections(
         reason_code=reason_code,
         barrier=barrier,
         cfg=cfg,
-        zone_states=zone_states,
+        zone_states=state.zone_states,
     )
 
     return result
@@ -495,7 +503,7 @@ def _poll_single_camera(
         db=db,
         cfg=cfg,
         barrier=barrier,
-        zone_states=state.zone_states,
+        state=state,
         camera_id=camera_id,
     )
 

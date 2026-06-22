@@ -24,6 +24,24 @@ class PipelineState:
     zone_states: dict[int | None, ZoneRuntimeState] = field(default_factory=dict)
     last_preview_write_ts: float = 0.0
     last_no_zone_warning_ts: float = 0.0
+    # Suppress repeated deny/observed events for same plate+zone
+    _deny_ts: dict[tuple[str, int | None], float] = field(default_factory=dict)
+    _observed_ts: dict[tuple[str, int | None], float] = field(default_factory=dict)
+
+    DENY_SUPPRESS_SEC: float = 300.0     # 5 min — same plate can't spam deny alerts
+    OBSERVED_SUPPRESS_SEC: float = 120.0 # 2 min — raw detection events
+
+    def is_deny_suppressed(self, plate: str, zone_id: int | None) -> bool:
+        return time.monotonic() - self._deny_ts.get((plate, zone_id), 0.0) < self.DENY_SUPPRESS_SEC
+
+    def mark_deny(self, plate: str, zone_id: int | None) -> None:
+        self._deny_ts[(plate, zone_id)] = time.monotonic()
+
+    def is_observed_suppressed(self, plate: str, zone_id: int | None) -> bool:
+        return time.monotonic() - self._observed_ts.get((plate, zone_id), 0.0) < self.OBSERVED_SUPPRESS_SEC
+
+    def mark_observed(self, plate: str, zone_id: int | None) -> None:
+        self._observed_ts[(plate, zone_id)] = time.monotonic()
 
     def close_all_zones(self, barrier: BarrierController) -> None:
         """Close all currently open zones.
@@ -83,4 +101,6 @@ class PipelineState:
             zone_states={},
             last_preview_write_ts=0.0,
             last_no_zone_warning_ts=0.0,
+            _deny_ts={},
+            _observed_ts={},
         )
