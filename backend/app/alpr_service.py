@@ -10,7 +10,7 @@ import numpy as np
 
 from fast_alpr import ALPR
 
-from .normalization import normalize_plate
+from .normalization import is_valid_ua_plate, normalize_plate
 from .types import PlateDetection
 
 
@@ -69,7 +69,7 @@ class AlprService:
                 continue
 
             plate = normalize_plate(raw_text)
-            if not plate.normalized:
+            if not plate.normalized or not is_valid_ua_plate(plate.normalized):
                 continue
 
             ocr_conf = 0.0

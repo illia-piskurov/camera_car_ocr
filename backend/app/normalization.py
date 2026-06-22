@@ -5,6 +5,9 @@ from dataclasses import dataclass
 
 NON_ALNUM = re.compile(r"[^A-Z0-9]")
 
+# Standard Ukrainian civilian plate: 2 letters + 4 digits + 2 letters (e.g. AO6294HX)
+UA_PLATE_RE = re.compile(r"^[A-Z]{2}\d{4}[A-Z]{2}$")
+
 # UA/CIS plates often come with Cyrillic letters that are visually identical to Latin.
 # Convert them before filtering so values from 1C (e.g., "ВМ0756АХ") stay matchable.
 CYRILLIC_TO_LATIN = str.maketrans(
@@ -43,6 +46,11 @@ FUZZY_MAP = str.maketrans(
 class NormalizedPlate:
     normalized: str
     fuzzy: str
+
+
+def is_valid_ua_plate(normalized: str) -> bool:
+    """Return True only for standard Ukrainian civilian plates (AA1234BB format)."""
+    return bool(UA_PLATE_RE.match(normalized))
 
 
 def normalize_plate(value: str) -> NormalizedPlate:
