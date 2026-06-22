@@ -16,11 +16,13 @@
     reason: string; time: string; zone: string; cardClass: CardClass;
   };
 
-  // px values per size setting
+  // px values per size setting.
+  // hExpanded is intentionally larger than card+statusbar so there are ~14px of
+  // transparent space above the card — the "frame sticking out above notification".
   const SIZES: Record<SizeKey, { w: number; hCompact: number; hExpanded: number; fs: number }> = {
-    small:  { w: 280, hCompact: 38,  hExpanded: 110, fs: 11.5 },
-    medium: { w: 340, hCompact: 46,  hExpanded: 140, fs: 14   },
-    large:  { w: 430, hCompact: 58,  hExpanded: 175, fs: 17.5 },
+    small:  { w: 280, hCompact: 38,  hExpanded: 128, fs: 11.5 },
+    medium: { w: 340, hCompact: 46,  hExpanded: 158, fs: 14   },
+    large:  { w: 430, hCompact: 58,  hExpanded: 196, fs: 17.5 },
   };
 
   // ── State ──────────────────────────────────────────────────────────────────
@@ -32,9 +34,9 @@
   let displayTimeSec = $state(30);
   let dismissTimer: ReturnType<typeof setTimeout> | null = null;
 
-  // Screen info cached for repositioning
-  let screenW = 0;
-  let screenH = 0;
+  // $state so that the $effect re-runs once onMount resolves the monitor dimensions
+  let screenW = $state(0);
+  let screenH = $state(0);
 
   // ── Reason codes ───────────────────────────────────────────────────────────
 
@@ -86,7 +88,11 @@
       cardClass: decision === "open" ? "open" : "deny",
     };
 
-    dismissTimer = setTimeout(() => { card = null; }, displayTimeSec * 1000);
+    void resizeWindow(true);
+    dismissTimer = setTimeout(() => {
+      card = null;
+      void resizeWindow(false);
+    }, displayTimeSec * 1000);
   }
 
   // ── Init ───────────────────────────────────────────────────────────────────

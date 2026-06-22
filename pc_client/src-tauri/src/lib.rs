@@ -41,9 +41,9 @@ const SETTINGS_LABEL: &str = "settings";
 
 fn size_dims(size: &str) -> (f64, f64) {
     match size {
-        "small" => (280.0, 110.0),
-        "large"  => (430.0, 175.0),
-        _        => (340.0, 140.0),
+        "small" => (280.0, 128.0),
+        "large"  => (430.0, 196.0),
+        _        => (340.0, 158.0),
     }
 }
 
