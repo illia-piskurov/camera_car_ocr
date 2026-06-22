@@ -137,12 +137,7 @@ def _detect_in_zones(
         if zone_id is not None:
             zone_frames[zone_id] = zone_frame
 
-        zone_label = str(
-            zone.get("ha_open_entity_id")
-            or zone.get("ha_close_entity_id")
-            or zone.get("name")
-            or ""
-        )
+        zone_label = str(zone.get("name") or "")
 
         detections.extend(
             alpr.detect(
