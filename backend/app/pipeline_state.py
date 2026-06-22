@@ -27,9 +27,14 @@ class PipelineState:
     # Suppress repeated deny/observed events for same plate+zone
     _deny_ts: dict[tuple[str, int | None], float] = field(default_factory=dict)
     _observed_ts: dict[tuple[str, int | None], float] = field(default_factory=dict)
+    # Suppress all events from the same zone for N seconds after any event fires.
+    # Prevents spam from repeated OCR frames of the same passing vehicle.
+    # Open decisions always bypass this cooldown so a whitelisted plate is never blocked.
+    _zone_cooldown_ts: dict[int | None, float] = field(default_factory=dict)
 
     DENY_SUPPRESS_SEC: float = 300.0     # 5 min — same plate can't spam deny alerts
     OBSERVED_SUPPRESS_SEC: float = 120.0 # 2 min — raw detection events
+    ZONE_COOLDOWN_SEC: float = 8.0       # 8 s  — one vehicle pass per zone
 
     def is_deny_suppressed(self, plate: str, zone_id: int | None) -> bool:
         return time.monotonic() - self._deny_ts.get((plate, zone_id), 0.0) < self.DENY_SUPPRESS_SEC
@@ -42,6 +47,12 @@ class PipelineState:
 
     def mark_observed(self, plate: str, zone_id: int | None) -> None:
         self._observed_ts[(plate, zone_id)] = time.monotonic()
+
+    def is_zone_in_cooldown(self, zone_id: int | None) -> bool:
+        return time.monotonic() - self._zone_cooldown_ts.get(zone_id, 0.0) < self.ZONE_COOLDOWN_SEC
+
+    def mark_zone_event(self, zone_id: int | None) -> None:
+        self._zone_cooldown_ts[zone_id] = time.monotonic()
 
     def close_all_zones(self, barrier: BarrierController) -> None:
         """Close all currently open zones.
@@ -103,4 +114,5 @@ class PipelineState:
             last_no_zone_warning_ts=0.0,
             _deny_ts={},
             _observed_ts={},
+            _zone_cooldown_ts={},
         )

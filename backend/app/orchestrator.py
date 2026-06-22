@@ -193,7 +193,13 @@ def _handle_detections(
         snapshot_source_detection=detections[0] if detections else None,
     )
 
+    # Track zones where we actually write an event — they get zone cooldown applied at the end
+    # so that the next frame skips them entirely (prevents repeated OCR reads of same vehicle).
+    zones_written: set[int | None] = set()
+
     for detection in detections:
+        if state.is_zone_in_cooldown(detection.zone_id):
+            continue
         plate = detection.normalized_text or detection.raw_text
         if not state.is_observed_suppressed(plate, detection.zone_id):
             stages.record_decision_event(
@@ -204,8 +210,11 @@ def _handle_detections(
                 camera_id=camera_id,
             )
             state.mark_observed(plate, detection.zone_id)
+            zones_written.add(detection.zone_id)
 
     if decision_detection is None:
+        for zid in zones_written:
+            state.mark_zone_event(zid)
         return result
 
     should_open, reason_code = stages.evaluate_decision(
@@ -227,8 +236,12 @@ def _handle_detections(
     plate = decision_detection.normalized_text
     zone_id = decision_detection.zone_id
 
-    # Open events: always record. Deny events: suppress if same plate seen recently.
-    if should_open or not state.is_deny_suppressed(plate, zone_id):
+    # Open events always bypass zone cooldown — a whitelisted plate must never be blocked.
+    # Deny events are suppressed both by zone cooldown and by the per-plate 5-min suppress.
+    if should_open or (
+        not state.is_zone_in_cooldown(zone_id)
+        and not state.is_deny_suppressed(plate, zone_id)
+    ):
         stages.record_decision_event(
             detection=decision_detection,
             decision=result.frame_last_decision,
@@ -238,23 +251,28 @@ def _handle_detections(
         )
         if not should_open:
             state.mark_deny(plate, zone_id)
+        zones_written.add(zone_id)
+
+        stages.execute_barrier_action(
+            should_open=should_open,
+            detection=decision_detection,
+            reason_code=reason_code,
+            barrier=barrier,
+            cfg=cfg,
+            zone_states=state.zone_states,
+        )
 
     LOG.info(
-        "Decision plate=%s ocr_conf=%.3f decision=%s reason=%s",
+        "Decision plate=%s ocr_conf=%.3f decision=%s reason=%s zone_cooldown=%s",
         decision_detection.normalized_text,
         decision_detection.ocr_confidence,
         result.frame_last_decision,
         reason_code,
+        state.is_zone_in_cooldown(zone_id),
     )
 
-    stages.execute_barrier_action(
-        should_open=should_open,
-        detection=decision_detection,
-        reason_code=reason_code,
-        barrier=barrier,
-        cfg=cfg,
-        zone_states=state.zone_states,
-    )
+    for zid in zones_written:
+        state.mark_zone_event(zid)
 
     return result
 
