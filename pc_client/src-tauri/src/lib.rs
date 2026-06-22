@@ -42,8 +42,8 @@ fn init_logging() {
 const DEFAULT_BACKEND_URL: &str = "http://localhost:8000";
 const ALERT_LABEL: &str = "alert";
 const SETTINGS_LABEL: &str = "settings";
-const ALERT_W: f64 = 390.0;
-const ALERT_H: f64 = 380.0;
+const ALERT_W: f64 = 340.0;
+const ALERT_H: f64 = 140.0;
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -130,7 +130,7 @@ fn ensure_alert_window(app: &AppHandle) -> tauri::WebviewWindow {
         .always_on_top(true)
         .skip_taskbar(true)
         .resizable(false)
-        .visible(false)
+        .visible(true)
         .transparent(true)
         .build()
     {

@@ -1,13 +1,10 @@
 <script lang="ts">
   import { onMount, onDestroy } from "svelte";
   import { listen } from "@tauri-apps/api/event";
-  import { getCurrentWindow } from "@tauri-apps/api/window";
-
-  const appWindow = getCurrentWindow();
 
   // ── Types ──────────────────────────────────────────────────────────────────
 
-  type CardClass = "open" | "deny" | "skip";
+  type CardClass = "open" | "deny";
 
   type Card = {
     uid: string;
@@ -21,133 +18,145 @@
 
   // ── State ──────────────────────────────────────────────────────────────────
 
-  let cards = $state<Card[]>([]);
-  const timers = new Map<string, ReturnType<typeof setTimeout>>();
+  let card = $state<Card | null>(null);
+  let sseConnected = $state(false);
+  let sseMessage = $state("Підключення…");
+  let dismissTimer: ReturnType<typeof setTimeout> | null = null;
 
   // ── Reason code → Ukrainian ────────────────────────────────────────────────
 
   const REASONS: Record<string, string> = {
-    open_approved:          "Номер знайдено в базі дозволених",
-    open_fuzzy_edit:        "Номер розпізнано з виправленням",
-    not_whitelisted:        "Номер відсутній у базі дозволених",
-    cross_camera_suppressed:"Шлагбаум вже відкрито по сусідній камері",
-    raw_detection:          "Розпізнавання без рішення",
+    open_approved:           "Номер знайдено в базі дозволених",
+    open_fuzzy_edit:         "Номер розпізнано з виправленням",
+    not_whitelisted:         "Номер відсутній у базі дозволених",
+    cross_camera_suppressed: "Шлагбаум вже відкрито по сусідній камері",
   };
-
-  function classify(decision: string, reason: string): { cls: CardClass; label: string } {
-    if (decision === "open") return { cls: "open", label: "ВІДКРИТО" };
-    if (reason === "not_whitelisted") return { cls: "deny", label: "ВІДМОВЛЕНО" };
-    return { cls: "skip", label: "ПРОПУЩЕНО" };
-  }
 
   function fmtTime(iso: string): string {
     return new Date(iso).toLocaleTimeString("uk-UA", {
-      hour: "2-digit",
-      minute: "2-digit",
-      second: "2-digit",
+      hour: "2-digit", minute: "2-digit", second: "2-digit",
     });
   }
 
-  // ── Card lifecycle ─────────────────────────────────────────────────────────
+  // ── Event handler ──────────────────────────────────────────────────────────
 
-  async function addCard(event: Record<string, unknown>) {
+  function onRecognition(event: Record<string, unknown>) {
     const decision = String(event.decision ?? "");
     const reason_code = String(event.reason_code ?? "");
 
-    const { cls, label } = classify(decision, reason_code);
-    const uid = `${event.id}-${Date.now()}`;
+    if (dismissTimer) { clearTimeout(dismissTimer); dismissTimer = null; }
 
-    const card: Card = {
-      uid,
+    card = {
+      uid: `${event.id}-${Date.now()}`,
       plate: String(event.plate || event.raw_plate || ""),
-      label,
+      label: decision === "open" ? "ВІДКРИТО" : "ВІДМОВЛЕНО",
       reason: REASONS[reason_code] ?? reason_code,
       time: fmtTime(String(event.occurred_at ?? "")),
       zone: String(event.zone_name ?? ""),
-      cardClass: cls,
+      cardClass: decision === "open" ? "open" : "deny",
     };
 
-    // Max 3 visible — drop oldest if overflow
-    const next = [...cards, card];
-    if (next.length > 3) {
-      const dropped = next.shift()!;
-      clearTimeout(timers.get(dropped.uid));
-      timers.delete(dropped.uid);
-    }
-    cards = next;
-
-    if (cards.length === 1) {
-      await appWindow.show();
-    }
-
-    timers.set(uid, setTimeout(() => void removeCard(uid), 10_000));
+    dismissTimer = setTimeout(() => { card = null; }, 30_000);
   }
 
-  async function removeCard(uid: string) {
-    const t = timers.get(uid);
-    if (t !== undefined) { clearTimeout(t); timers.delete(uid); }
-    cards = cards.filter((c) => c.uid !== uid);
-    if (cards.length === 0) {
-      await appWindow.hide();
-    }
-  }
-
-  // ── Tauri event listeners ──────────────────────────────────────────────────
+  // ── Listeners ──────────────────────────────────────────────────────────────
 
   let unlistenEvent: (() => void) | null = null;
+  let unlistenStatus: (() => void) | null = null;
 
   onMount(async () => {
     unlistenEvent = await listen<Record<string, unknown>>("recognition-event", (e) => {
-      void addCard(e.payload);
+      onRecognition(e.payload);
+    });
+    unlistenStatus = await listen<{ connected: boolean; message: string }>("sse-status", (e) => {
+      sseConnected = e.payload.connected;
+      sseMessage = e.payload.message;
     });
   });
 
   onDestroy(() => {
     unlistenEvent?.();
-    timers.forEach((t) => clearTimeout(t));
+    unlistenStatus?.();
+    if (dismissTimer) clearTimeout(dismissTimer);
   });
 </script>
 
-<div class="stack">
-  {#each cards as card (card.uid)}
-    <div class="card {card.cardClass}">
-      <div class="accent-bar"></div>
-      <div class="body">
-        <div class="header">
-          <span class="label">{card.label}</span>
-          <span class="time">{card.time}</span>
+<div class="wrapper">
+  <!-- ── Status bar (always visible) ── -->
+  <div class="statusbar">
+    <span class="dot" class:ok={sseConnected}></span>
+    <span class="statusbar-text">
+      {sseConnected ? "ALPR Монітор — очікування" : sseMessage}
+    </span>
+  </div>
+
+  <!-- ── Event card (shown 30 s after last event) ── -->
+  {#if card}
+    {#key card.uid}
+      <div class="card {card.cardClass}">
+        <div class="accent-bar"></div>
+        <div class="body">
+          <div class="header">
+            <span class="label">{card.label}</span>
+            <span class="time">{card.time}</span>
+          </div>
+          <div class="plate">{card.plate}</div>
+          <div class="meta">{card.reason}</div>
+          {#if card.zone}
+            <div class="meta zone">{card.zone}</div>
+          {/if}
         </div>
-        <div class="plate">{card.plate}</div>
-        <div class="reason">{card.reason}</div>
-        {#if card.zone}
-          <div class="zone">{card.zone}</div>
-        {/if}
       </div>
-    </div>
-  {/each}
+    {/key}
+  {/if}
 </div>
 
 <style>
-  :global(*) {
-    box-sizing: border-box;
-    margin: 0;
-    padding: 0;
-  }
+  :global(*) { box-sizing: border-box; margin: 0; padding: 0; }
 
-  :global(html),
-  :global(body) {
+  :global(html), :global(body) {
     background: transparent !important;
     overflow: hidden;
     font-family: "Segoe UI", system-ui, -apple-system, sans-serif;
     -webkit-font-smoothing: antialiased;
   }
 
-  .stack {
+  .wrapper {
     display: flex;
     flex-direction: column;
-    gap: 8px;
-    padding: 8px;
-    width: 390px;
+    gap: 6px;
+    padding: 6px;
+    width: 340px;
+  }
+
+  /* ── Status bar ── */
+  .statusbar {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    background: rgba(13, 17, 27, 0.92);
+    border: 1px solid rgba(255,255,255,0.07);
+    border-radius: 8px;
+    padding: 7px 12px;
+    backdrop-filter: blur(12px);
+  }
+
+  .dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    flex-shrink: 0;
+    background: #475569;
+    transition: background 0.4s;
+  }
+  .dot.ok { background: #22c55e; }
+
+  .statusbar-text {
+    font-size: 11px;
+    color: #64748b;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
   }
 
   /* ── Card ── */
@@ -156,17 +165,16 @@
     border-radius: 10px;
     background: rgba(13, 17, 27, 0.96);
     backdrop-filter: blur(12px);
-    box-shadow: 0 6px 32px rgba(0, 0, 0, 0.6), 0 1px 0 rgba(255,255,255,0.04) inset;
+    box-shadow: 0 6px 32px rgba(0,0,0,0.6), 0 1px 0 rgba(255,255,255,0.04) inset;
     overflow: hidden;
-    border: 1px solid rgba(255, 255, 255, 0.07);
-    animation: slide-in 0.15s ease-out;
+    border: 1px solid rgba(255,255,255,0.07);
   }
 
   .card.open { animation: slide-in 0.15s ease-out, blink-green 0.9s ease-out 0.15s; }
   .card.deny { animation: slide-in 0.15s ease-out, blink-red   0.9s ease-out 0.15s; }
 
   @keyframes slide-in {
-    from { opacity: 0; transform: translateX(24px); }
+    from { opacity: 0; transform: translateX(20px); }
     to   { opacity: 1; transform: translateX(0); }
   }
 
@@ -186,43 +194,26 @@
     100% { background: rgba(13, 17, 27, 0.96); }
   }
 
-  /* ── Accent bar (left stripe) ── */
-  .accent-bar {
-    width: 5px;
-    flex-shrink: 0;
-  }
-  .card.open  .accent-bar { background: #22c55e; }
-  .card.deny  .accent-bar { background: #ef4444; }
-  .card.skip  .accent-bar { background: #eab308; }
+  /* ── Accent bar ── */
+  .accent-bar { width: 5px; flex-shrink: 0; }
+  .card.open .accent-bar { background: #22c55e; }
+  .card.deny .accent-bar { background: #ef4444; }
 
-  /* ── Content ── */
-  .body {
-    padding: 12px 14px 10px;
-    flex: 1;
-    min-width: 0;
-  }
+  /* ── Body ── */
+  .body { padding: 10px 13px 9px; flex: 1; min-width: 0; }
 
   .header {
     display: flex;
     justify-content: space-between;
     align-items: center;
-    margin-bottom: 5px;
+    margin-bottom: 4px;
   }
 
-  .label {
-    font-size: 10px;
-    font-weight: 700;
-    letter-spacing: 0.14em;
-  }
+  .label { font-size: 10px; font-weight: 700; letter-spacing: 0.14em; }
   .card.open .label { color: #4ade80; }
   .card.deny .label { color: #f87171; }
-  .card.skip .label { color: #facc15; }
 
-  .time {
-    font-size: 11px;
-    color: #475569;
-    font-variant-numeric: tabular-nums;
-  }
+  .time { font-size: 11px; color: #475569; font-variant-numeric: tabular-nums; }
 
   .plate {
     font-size: 22px;
@@ -230,19 +221,10 @@
     color: #f1f5f9;
     letter-spacing: 0.1em;
     font-family: "Consolas", "Courier New", monospace;
-    margin-bottom: 5px;
+    margin-bottom: 4px;
     line-height: 1.1;
   }
 
-  .reason {
-    font-size: 12px;
-    color: #94a3b8;
-    line-height: 1.4;
-  }
-
-  .zone {
-    font-size: 11px;
-    color: #475569;
-    margin-top: 3px;
-  }
+  .meta { font-size: 11px; color: #94a3b8; line-height: 1.4; }
+  .zone { color: #475569; margin-top: 2px; }
 </style>
