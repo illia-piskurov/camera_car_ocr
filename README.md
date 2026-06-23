@@ -83,7 +83,7 @@ Edit `backend/onec_whitelist_stub.txt` and keep one plate per line.
 - `RECOGNITION_SNAPSHOT_ENABLED` (default `1`)
 - `RECOGNITION_SNAPSHOT_DIR` (default `data/recognized`)
 - `RECOGNITION_SNAPSHOT_JPEG_QUALITY` (default `90`)
-- `RECOGNITION_SNAPSHOT_MAX_FILES` (default `500`)
+- `RECOGNITION_SNAPSHOT_MAX_FILES` (default `1000`)
 
 When any detection frame is produced, backend saves an annotated snapshot with plate/decision overlay into `RECOGNITION_SNAPSHOT_DIR`.
 Dashboard table rows can open related event snapshot via backend endpoint `/api/events/{event_id}/image`.

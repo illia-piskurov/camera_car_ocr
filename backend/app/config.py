@@ -99,7 +99,7 @@ class Settings:
     recognition_snapshot_enabled: bool = True
     recognition_snapshot_dir: str = "data/recognized"
     recognition_snapshot_jpeg_quality: int = 90
-    recognition_snapshot_max_files: int = 500
+    recognition_snapshot_max_files: int = 1000
     detection_zones_max: int = 2
     alpr_detector_providers: str = ""
     alpr_ocr_providers: str = ""
