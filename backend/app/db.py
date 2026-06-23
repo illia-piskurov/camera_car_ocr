@@ -17,9 +17,12 @@ def utc_now() -> datetime:
     return datetime.now(timezone.utc)
 
 
-def _as_utc(value: datetime | None) -> datetime | None:
+def _as_utc(value: datetime | str | None) -> datetime | None:
     if value is None:
         return None
+    if isinstance(value, str):
+        # Raw SQL can return ISO strings; parse them
+        value = datetime.fromisoformat(value.replace("Z", "+00:00"))
     if value.tzinfo is None:
         return value.replace(tzinfo=timezone.utc)
     return value.astimezone(timezone.utc)
@@ -38,6 +41,7 @@ class WhitelistPlate(Base):
     fuzzy_plate: Mapped[str] = mapped_column(String(32), index=True)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     source: Mapped[str] = mapped_column(String(50), default="stub")
+    note: Mapped[str | None] = mapped_column(String(256), nullable=True)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
 
 
@@ -213,6 +217,11 @@ class Database:
                 conn.commit()
             if "last_state_at" not in barrier_cols:
                 conn.execute(text("ALTER TABLE barriers ADD COLUMN last_state_at DATETIME"))
+                conn.commit()
+
+            wp_cols = {row[1] for row in conn.execute(text("PRAGMA table_info(whitelist_plates)"))}
+            if "note" not in wp_cols:
+                conn.execute(text("ALTER TABLE whitelist_plates ADD COLUMN note VARCHAR(256)"))
                 conn.commit()
 
         # Auto-migrate: create Barrier records from existing zone entity IDs
@@ -821,11 +830,13 @@ class Database:
                 else:
                     item.fuzzy_plate = fuzzy
                     item.is_active = True
-                    item.source = source
+                    # Preserve manual source — don't overwrite with 1c_http/stub
+                    if item.source != "manual":
+                        item.source = source
                     item.updated_at = utc_now()
 
             for plate, item in existing.items():
-                if plate not in incoming:
+                if plate not in incoming and item.source != "manual":
                     item.is_active = False
                     item.updated_at = utc_now()
 
@@ -898,6 +909,32 @@ class Database:
                 )
             )
             session.commit()
+
+    def record_manual_capture(self, *, camera_id: int, frame_id: str, occurred_at: datetime) -> dict:
+        """Insert a synthetic event for a manually captured frame (no plate recognition)."""
+        with self.SessionLocal() as session:
+            row = RecognitionEvent(
+                camera_id=camera_id,
+                occurred_at=occurred_at,
+                frame_id=frame_id,
+                raw_plate="",
+                plate="",
+                fuzzy_plate="",
+                detection_confidence=0.0,
+                ocr_confidence=0.0,
+                decision="observed",
+                reason_code="manual_capture",
+            )
+            session.add(row)
+            session.commit()
+            session.refresh(row)
+            return {
+                "id": row.id,
+                "occurred_at": _utc_or_now(row.occurred_at).isoformat(),
+                "frame_id": row.frame_id,
+                "camera_id": row.camera_id,
+                "reason_code": row.reason_code,
+            }
 
     def replace_zones(
         self,
@@ -1080,6 +1117,192 @@ class Database:
                 "active": int(active or 0),
                 "inactive": int(inactive or 0),
             }
+
+    def list_whitelist(self, search: str = "", offset: int = 0, limit: int = 50) -> dict:
+        with self.SessionLocal() as session:
+            s = f"%{search}%" if search else "%"
+            total = session.scalar(
+                text("SELECT COUNT(*) FROM whitelist_plates WHERE (plate LIKE :s OR COALESCE(note,'') LIKE :s)"),
+                {"s": s},
+            ) or 0
+            rows = session.execute(
+                text("""
+                    SELECT
+                        wp.id, wp.plate, wp.fuzzy_plate, wp.is_active, wp.source, wp.note, wp.updated_at,
+                        re.occurred_at AS last_event_at,
+                        re.decision    AS last_decision,
+                        re.camera_id   AS last_camera_id
+                    FROM whitelist_plates wp
+                    LEFT JOIN (
+                        SELECT re2.plate, re2.decision, re2.camera_id, re2.occurred_at
+                        FROM recognition_events re2
+                        INNER JOIN (
+                            SELECT plate, MAX(occurred_at) AS max_at
+                            FROM recognition_events
+                            WHERE plate IS NOT NULL
+                            GROUP BY plate
+                        ) latest ON re2.plate = latest.plate AND re2.occurred_at = latest.max_at
+                    ) re ON re.plate = wp.plate
+                    WHERE (wp.plate LIKE :s OR COALESCE(wp.note,'') LIKE :s)
+                    ORDER BY wp.plate ASC
+                    LIMIT :limit OFFSET :offset
+                """),
+                {"s": s, "limit": limit, "offset": offset},
+            ).mappings().all()
+            return {
+                "entries": [dict(r) for r in rows],
+                "total": int(total),
+                "offset": offset,
+                "limit": limit,
+            }
+
+    def add_plate_manual(self, plate: str, fuzzy: str, note: str = "") -> dict:
+        with self.SessionLocal() as session:
+            existing = session.scalar(select(WhitelistPlate).where(WhitelistPlate.plate == plate))
+            if existing is not None:
+                existing.is_active = True
+                existing.source = "manual"
+                existing.note = note or existing.note
+                existing.updated_at = utc_now()
+                session.commit()
+                return self._plate_to_dict(existing)
+            item = WhitelistPlate(plate=plate, fuzzy_plate=fuzzy, is_active=True, source="manual", note=note or None, updated_at=utc_now())
+            session.add(item)
+            session.commit()
+            return self._plate_to_dict(item)
+
+    def update_plate(self, plate_id: int, note: str | None = None, is_active: bool | None = None) -> dict | None:
+        with self.SessionLocal() as session:
+            item = session.get(WhitelistPlate, plate_id)
+            if item is None:
+                return None
+            if note is not None:
+                item.note = note or None
+            if is_active is not None:
+                item.is_active = is_active
+            item.updated_at = utc_now()
+            session.commit()
+            return self._plate_to_dict(item)
+
+    def delete_plate(self, plate_id: int) -> bool:
+        with self.SessionLocal() as session:
+            item = session.get(WhitelistPlate, plate_id)
+            if item is None:
+                return False
+            if item.source != "manual":
+                return False
+            session.delete(item)
+            session.commit()
+            return True
+
+    @staticmethod
+    def _plate_to_dict(item: WhitelistPlate) -> dict:
+        return {
+            "id": item.id,
+            "plate": item.plate,
+            "fuzzy_plate": item.fuzzy_plate,
+            "is_active": item.is_active,
+            "source": item.source,
+            "note": item.note,
+            "updated_at": item.updated_at.isoformat() if item.updated_at else None,
+        }
+
+    def get_system_status(self) -> dict:
+        now = utc_now()
+
+        # Fetch each group in its own short session to avoid nested-session issues
+        with self.SessionLocal() as session:
+            cameras = session.execute(select(Camera).order_by(Camera.sort_order, Camera.id)).scalars().all()
+            barriers = session.execute(select(Barrier).order_by(Barrier.id)).scalars().all()
+            all_zones = session.execute(select(DetectionZone).order_by(DetectionZone.sort_order, DetectionZone.id)).scalars().all()
+
+            # Efficient last-event per zone: one GROUP BY scan + one join (no correlated subquery)
+            last_event_rows = session.execute(text("""
+                SELECT re.zone_id, re.plate, re.decision, re.occurred_at
+                FROM recognition_events re
+                INNER JOIN (
+                    SELECT zone_id, MAX(occurred_at) AS max_at
+                    FROM recognition_events
+                    WHERE zone_id IS NOT NULL
+                    GROUP BY zone_id
+                ) latest ON re.zone_id = latest.zone_id AND re.occurred_at = latest.max_at
+            """)).mappings().all()
+            last_events: dict[int, dict] = {r["zone_id"]: dict(r) for r in last_event_rows}
+
+            wl_active = session.scalar(select(func.count(WhitelistPlate.id)).where(WhitelistPlate.is_active.is_(True))) or 0
+            wl_inactive = session.scalar(select(func.count(WhitelistPlate.id)).where(WhitelistPlate.is_active.is_(False))) or 0
+            sync_row = session.get(SyncState, 1)
+            sync_at = _as_utc(sync_row.last_full_sync_at) if sync_row else None
+
+        camera_map = {c.id: c.name for c in cameras}
+        barrier_map = {b.id: b.name for b in barriers}
+
+        camera_list = [{"id": c.id, "name": c.name, "is_active": c.is_active} for c in cameras]
+
+        barrier_list = []
+        for b in barriers:
+            state_age = None
+            state_stale = True
+            if b.last_state_at is not None:
+                age = (now - _utc_or_now(b.last_state_at)).total_seconds()
+                state_age = round(age, 1)
+                state_stale = age > 30.0
+            barrier_list.append({
+                "id": b.id,
+                "name": b.name,
+                "state_check_enabled": b.state_check_enabled,
+                "has_model": b.state_model_data is not None,
+                "state": b.last_known_state,
+                "state_age_sec": state_age,
+                "state_stale": state_stale,
+            })
+
+        ocr_zones, check_zones, motion_zones = [], [], []
+        for z in all_zones:
+            cam_name = camera_map.get(z.camera_id) if z.camera_id else None
+            bar_name = barrier_map.get(z.barrier_id) if z.barrier_id else None
+            base = {
+                "id": z.id,
+                "name": z.name or f"Zone {z.id}",
+                "camera_id": z.camera_id,
+                "camera_name": cam_name,
+                "barrier_id": z.barrier_id,
+                "barrier_name": bar_name,
+            }
+            if z.zone_type == "detection":
+                last = last_events.get(z.id)
+                last_age = None
+                last_at = None
+                if last and last.get("occurred_at"):
+                    evt_at = _as_utc(last["occurred_at"])
+                    if evt_at:
+                        last_age = round((now - evt_at).total_seconds())
+                        last_at = evt_at.isoformat()
+                ocr_zones.append({
+                    **base,
+                    "is_enabled": bool(z.is_enabled),
+                    "last_plate": last.get("plate") if last else None,
+                    "last_decision": last.get("decision") if last else None,
+                    "last_event_at": last_at,
+                    "last_event_age_sec": last_age,
+                })
+            elif z.zone_type == "barrier_check":
+                check_zones.append(base)
+            elif z.zone_type == "barrier_motion":
+                motion_zones.append(base)
+
+        sync_age = round((now - sync_at).total_seconds()) if sync_at else None
+
+        return {
+            "cameras": camera_list,
+            "barriers": barrier_list,
+            "ocr_zones": ocr_zones,
+            "check_zones": check_zones,
+            "motion_zones": motion_zones,
+            "whitelist": {"active": int(wl_active), "inactive": int(wl_inactive)},
+            "last_sync_at": sync_at.isoformat() if sync_at else None,
+            "sync_age_sec": sync_age,
+        }
 
     def get_decision_counts_since(self, since: datetime, camera_id: int | None = None) -> dict[str, int]:
         threshold = _utc_or_now(since)

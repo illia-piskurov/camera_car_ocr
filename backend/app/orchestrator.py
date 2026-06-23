@@ -458,8 +458,8 @@ def _snapshot_stage(
             decision=detection_result.frame_last_decision,
             reason_code=detection_result.frame_last_reason or "raw_detection",
             zone_name=detection_for_snapshot.zone_name,
-            zones=stage.active_zones,
-            highlight_zone_id=detection_for_snapshot.zone_id,
+            # No zone overlays on saved snapshots — they corrupt barrier-zone crops
+            # used for calibration model training. Preview draws zones separately.
             apply_alpr_predictions=apply_alpr_predictions,
             output_dir=cfg.recognition_snapshot_dir,
             jpeg_quality=cfg.recognition_snapshot_jpeg_quality,

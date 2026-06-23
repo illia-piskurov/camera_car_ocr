@@ -1,10 +1,11 @@
 "use client"
 
 import { useCallback, useEffect, useState } from "react"
-import { X, RefreshCw, Check, ChevronDown, ChevronUp } from "lucide-react"
+import { X, RefreshCw, Check, ChevronDown, ChevronUp, Camera } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import {
     applyBarrierCalibration,
+    captureCalibrationFrames,
     clearBarrierCalibration,
     getBarrierCalibration,
     setCalibrationLabel,
@@ -153,6 +154,9 @@ export function BarrierCalibrationPanel({ barrier, onClose, onBarrierUpdated }: 
     } | null>(null)
     const [applyBusy, setApplyBusy] = useState(false)
     const [clearBusy, setClearBusy] = useState(false)
+    const [captureBusy, setCaptureBusy] = useState(false)
+    const [captureCount, setCaptureCount] = useState(3)
+    const [captureMsg, setCaptureMsg] = useState<string | null>(null)
     const [settingRefFor, setSettingRefFor] = useState<number | null>(null)
     const [pendingLabels, setPendingLabels] = useState<Record<number, boolean>>({})
 
@@ -204,6 +208,21 @@ export function BarrierCalibrationPanel({ barrier, onClose, onBarrierUpdated }: 
             setError(err instanceof Error ? err.message : "Failed to set reference")
         } finally {
             setSettingRefFor(null)
+        }
+    }
+
+    async function handleCapture() {
+        setCaptureBusy(true)
+        setCaptureMsg(null)
+        setError(null)
+        try {
+            const result = await captureCalibrationFrames(barrier.id, captureCount)
+            setCaptureMsg(`Captured ${result.captured.length} frame${result.captured.length !== 1 ? "s" : ""}`)
+            await load(limit)
+        } catch (err) {
+            setError(err instanceof Error ? err.message : "Capture failed")
+        } finally {
+            setCaptureBusy(false)
         }
     }
 
@@ -350,25 +369,52 @@ export function BarrierCalibrationPanel({ barrier, onClose, onBarrierUpdated }: 
                 </div>
 
                 {/* Footer */}
-                <div className="shrink-0 border-t border-slate-700/70 px-4 py-3 flex items-center gap-2">
-                    <Button
-                        size="sm"
-                        onClick={() => void handleApply()}
-                        disabled={!canApply || applyBusy}
-                        className="flex-1 border border-violet-500/30 bg-violet-600/80 text-violet-50 hover:bg-violet-500 disabled:opacity-40"
-                        title={!data?.has_reference ? "Set a reference first" : nLabeled < 2 ? "Label at least 1 open and 1 closed photo" : ""}
-                    >
-                        {applyBusy ? "Training…" : hasModel ? "Retrain Model" : "Train Model"}
-                    </Button>
-                    <Button
-                        size="sm"
-                        variant="secondary"
-                        onClick={() => void handleClear()}
-                        disabled={clearBusy || nLabeled === 0}
-                        className="border border-slate-600/70 bg-slate-700/80 text-slate-300 hover:bg-slate-600/90 disabled:opacity-40"
-                    >
-                        {clearBusy ? "Clearing…" : "Clear Labels"}
-                    </Button>
+                <div className="shrink-0 border-t border-slate-700/70 px-4 py-3 space-y-2">
+                    {/* Capture row */}
+                    <div className="flex items-center gap-2">
+                        <Camera size={14} className="shrink-0 text-slate-400" />
+                        <span className="text-[11px] text-slate-400">Capture live frame:</span>
+                        <select
+                            value={captureCount}
+                            onChange={(e) => setCaptureCount(Number(e.target.value))}
+                            disabled={captureBusy}
+                            className="rounded border border-slate-600 bg-slate-800 px-2 py-0.5 text-[11px] text-slate-300 outline-none focus:border-sky-400 disabled:opacity-40"
+                        >
+                            {[1, 2, 3, 5, 10].map((n) => (
+                                <option key={n} value={n}>{n}</option>
+                            ))}
+                        </select>
+                        <Button
+                            size="sm"
+                            onClick={() => void handleCapture()}
+                            disabled={captureBusy}
+                            className="border border-sky-500/40 bg-sky-600/70 text-sky-50 hover:bg-sky-500/80 disabled:opacity-40 px-3 py-1 text-[11px]"
+                        >
+                            {captureBusy ? "Capturing…" : "Capture"}
+                        </Button>
+                        {captureMsg && <span className="text-[11px] text-emerald-400">{captureMsg}</span>}
+                    </div>
+                    {/* Train / clear row */}
+                    <div className="flex items-center gap-2">
+                        <Button
+                            size="sm"
+                            onClick={() => void handleApply()}
+                            disabled={!canApply || applyBusy}
+                            className="flex-1 border border-violet-500/30 bg-violet-600/80 text-violet-50 hover:bg-violet-500 disabled:opacity-40"
+                            title={!data?.has_reference ? "Set a reference first" : nLabeled < 2 ? "Label at least 1 open and 1 closed photo" : ""}
+                        >
+                            {applyBusy ? "Training…" : hasModel ? "Retrain Model" : "Train Model"}
+                        </Button>
+                        <Button
+                            size="sm"
+                            variant="secondary"
+                            onClick={() => void handleClear()}
+                            disabled={clearBusy || nLabeled === 0}
+                            className="border border-slate-600/70 bg-slate-700/80 text-slate-300 hover:bg-slate-600/90 disabled:opacity-40"
+                        >
+                            {clearBusy ? "Clearing…" : "Clear Labels"}
+                        </Button>
+                    </div>
                 </div>
             </div>
         </div>

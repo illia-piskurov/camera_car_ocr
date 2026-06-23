@@ -1,7 +1,8 @@
 "use client"
 
 import { useEffect, useMemo, useRef, useState } from "react"
-import { Camera, ChevronDown, History, Layers, PencilLine, Plus, RefreshCw, Trash2, Zap } from "lucide-react"
+import { Activity, Camera, ChevronDown, History, Layers, ListFilter, LogOut, PencilLine, Plus, RefreshCw, Trash2, Zap } from "lucide-react"
+import { useRouter } from "next/navigation"
 import { Button } from "@/components/ui/button"
 import type { Camera as CameraModel } from "@/lib/types"
 
@@ -14,6 +15,8 @@ type ControlRoomHeaderProps = {
     onDeleteCamera: (camera: CameraModel) => void
     onOpenGroups: () => void
     onOpenHistory: () => void
+    onOpenWhitelist: () => void
+    onOpenStatus: () => void
     syncAgeSec: number | null
     onRefresh: () => void
     onForceSync: () => void
@@ -47,14 +50,23 @@ export function ControlRoomHeader({
     onDeleteCamera,
     onOpenGroups,
     onOpenHistory,
+    onOpenWhitelist,
+    onOpenStatus,
     syncAgeSec,
     onRefresh,
     onForceSync,
     refreshing = false,
 }: ControlRoomHeaderProps) {
+    const router = useRouter()
     const [isCameraMenuOpen, setIsCameraMenuOpen] = useState(false)
     const [highlightedIndex, setHighlightedIndex] = useState(-1)
     const cameraMenuRef = useRef<HTMLDivElement | null>(null)
+
+    async function handleLogout() {
+        await fetch("/api/auth", { method: "DELETE" })
+        router.push("/login")
+        router.refresh()
+    }
 
     const selectedCamera = useMemo(
         () => cameras.find((camera) => camera.id === selectedCameraId) ?? cameras[0] ?? null,
@@ -304,6 +316,24 @@ export function ControlRoomHeader({
                     <Button
                         variant="secondary"
                         size="sm"
+                        onClick={onOpenWhitelist}
+                        className="gap-2 border border-slate-500/70 bg-slate-700/80 text-slate-100 hover:bg-slate-600/90"
+                    >
+                        <ListFilter className="size-4" />
+                        Whitelist
+                    </Button>
+                    <Button
+                        variant="secondary"
+                        size="sm"
+                        onClick={onOpenStatus}
+                        className="gap-2 border border-slate-500/70 bg-slate-700/80 text-slate-100 hover:bg-slate-600/90"
+                    >
+                        <Activity className="size-4" />
+                        Status
+                    </Button>
+                    <Button
+                        variant="secondary"
+                        size="sm"
                         onClick={onRefresh}
                         disabled={refreshing}
                         className="gap-2 border border-slate-500/70 bg-slate-700/80 text-slate-100 hover:bg-slate-600/90"
@@ -325,6 +355,16 @@ export function ControlRoomHeader({
                 <div className="w-full text-xs text-slate-300 sm:w-auto sm:text-right">
                     Last sync: {formatSyncAge(syncAgeSec)} | 1C: {syncStatus}
                 </div>
+
+                <Button
+                    variant="secondary"
+                    size="sm"
+                    onClick={() => void handleLogout()}
+                    className="gap-2 border border-slate-600/60 bg-slate-800/60 text-slate-400 hover:bg-slate-700/80 hover:text-slate-200"
+                    title="Вийти"
+                >
+                    <LogOut className="size-4" />
+                </Button>
             </div>
         </header>
     )

@@ -416,6 +416,75 @@ def clear_barrier_calibration(barrier_id: int) -> dict[str, object]:
     return {"status": "ok"}
 
 
+@app.post("/api/barriers/{barrier_id}/calibration/capture")
+def capture_calibration_frames(
+    barrier_id: int, count: int = Query(default=1, ge=1, le=10)
+) -> dict[str, object]:
+    """Grab live frames from the barrier's camera and save them as training snapshots."""
+    if db.get_barrier(barrier_id) is None:
+        raise HTTPException(status_code=404, detail=f"Barrier {barrier_id} not found")
+
+    check_zone = db.get_barrier_check_zone(barrier_id)
+    if check_zone is None:
+        raise HTTPException(status_code=400, detail="No check zone configured for this barrier")
+
+    camera_id = check_zone.get("camera_id")
+    if camera_id is None:
+        raise HTTPException(status_code=400, detail="Barrier check zone has no camera assigned")
+
+    camera = db.get_camera(int(camera_id))
+    if camera is None:
+        raise HTTPException(status_code=404, detail=f"Camera {camera_id} not found")
+
+    creds = db.get_camera_credentials(int(camera_id), cfg.get_camera_credentials_encryption_key())
+    if creds is None:
+        raise HTTPException(status_code=500, detail="Could not load camera credentials")
+
+    username, password, auth_mode = creds
+    client = SnapshotCameraClient(
+        url=str(camera["snapshot_url"]),
+        timeout_sec=10.0,
+        retries=1,
+        username=username,
+        password=password,
+        auth_mode=auth_mode,
+    )
+
+    os.makedirs(cfg.recognition_snapshot_dir, exist_ok=True)
+    captured = []
+    try:
+        for _ in range(count):
+            frame = client.fetch_frame()
+            if frame is None:
+                raise HTTPException(status_code=502, detail="Failed to fetch frame from camera")
+
+            import cv2 as _cv2
+            import uuid as _uuid
+
+            now = utc_now()
+            frame_id = _uuid.uuid4().hex[:12]
+            timestamp = now.strftime("%Y%m%d_%H%M%S_%f")
+            filename = f"{timestamp}_{frame_id}___observed.jpg"
+            out_path = os.path.join(cfg.recognition_snapshot_dir, filename)
+
+            ok, encoded = _cv2.imencode(".jpg", frame, [int(_cv2.IMWRITE_JPEG_QUALITY), 85])
+            if not ok:
+                raise HTTPException(status_code=500, detail="Failed to encode frame")
+            with open(out_path, "wb") as f:
+                f.write(encoded.tobytes())
+
+            event_info = db.record_manual_capture(
+                camera_id=int(camera_id),
+                frame_id=frame_id,
+                occurred_at=now,
+            )
+            captured.append(event_info)
+    finally:
+        client.close()
+
+    return {"status": "ok", "captured": captured}
+
+
 @app.get("/api/camera-groups")
 def list_camera_groups() -> dict[str, object]:
     return {"groups": db.list_camera_groups()}
@@ -620,6 +689,76 @@ def force_sync() -> dict[str, object]:
         "synced_count": synced,
         "last_sync_at": last_sync.isoformat() if last_sync else None,
     }
+
+
+class ManualPlateInput(BaseModel):
+    plate: str
+    note: str = ""
+
+
+class PlateUpdateInput(BaseModel):
+    note: str | None = None
+    is_active: bool | None = None
+
+
+@app.get("/api/status")
+def system_status() -> dict[str, object]:
+    import time as _time
+    status = db.get_system_status()
+
+    # Augment camera entries with worker-alive (check preview meta file mtime)
+    for cam in status["cameras"]:  # type: ignore[union-attr]
+        cid: int = cam["id"]  # type: ignore[index]
+        meta_path = cfg.get_preview_meta_path(cid)
+        try:
+            mtime = os.path.getmtime(meta_path)
+            age = _time.time() - mtime
+            cam["worker_alive"] = age < 30.0  # type: ignore[index]
+            cam["preview_age_sec"] = round(age, 1)  # type: ignore[index]
+        except OSError:
+            cam["worker_alive"] = False  # type: ignore[index]
+            cam["preview_age_sec"] = None  # type: ignore[index]
+
+    return status
+
+
+@app.get("/api/whitelist")
+def list_whitelist(
+    search: str = Query(default=""),
+    offset: int = Query(default=0, ge=0),
+    limit: int = Query(default=50, ge=1, le=200),
+) -> dict[str, object]:
+    return db.list_whitelist(search=search, offset=offset, limit=limit)
+
+
+@app.post("/api/whitelist")
+def add_whitelist_plate(payload: ManualPlateInput) -> dict[str, object]:
+    from .normalization import normalize_plate
+
+    raw = payload.plate.strip()
+    if not raw:
+        raise HTTPException(status_code=422, detail="plate is empty")
+    norm = normalize_plate(raw)
+    if not norm.normalized:
+        raise HTTPException(status_code=422, detail=f"Could not normalize plate: {raw!r}")
+    entry = db.add_plate_manual(plate=norm.normalized, fuzzy=norm.fuzzy, note=payload.note)
+    return {"entry": entry}
+
+
+@app.put("/api/whitelist/{plate_id}")
+def update_whitelist_plate(plate_id: int, payload: PlateUpdateInput) -> dict[str, object]:
+    entry = db.update_plate(plate_id, note=payload.note, is_active=payload.is_active)
+    if entry is None:
+        raise HTTPException(status_code=404, detail="Plate not found")
+    return {"entry": entry}
+
+
+@app.delete("/api/whitelist/{plate_id}")
+def delete_whitelist_plate(plate_id: int) -> dict[str, object]:
+    ok = db.delete_plate(plate_id)
+    if not ok:
+        raise HTTPException(status_code=404, detail="Plate not found or not manually added")
+    return {"status": "ok"}
 
 
 @app.get("/api/events/{event_id}/image")

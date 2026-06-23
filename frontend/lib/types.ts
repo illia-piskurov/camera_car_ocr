@@ -118,6 +118,78 @@ export type MotionZone = {
     zone_type: "barrier_motion"
 }
 
+export type SystemStatusCamera = {
+    id: number
+    name: string
+    is_active: boolean
+    worker_alive: boolean
+    preview_age_sec: number | null
+}
+
+export type SystemStatusBarrier = {
+    id: number
+    name: string
+    state_check_enabled: boolean
+    has_model: boolean
+    state: string | null
+    state_age_sec: number | null
+    state_stale: boolean
+}
+
+export type SystemStatusOcrZone = {
+    id: number
+    name: string
+    camera_id: number | null
+    camera_name: string | null
+    barrier_id: number | null
+    barrier_name: string | null
+    is_enabled: boolean
+    last_plate: string | null
+    last_decision: string | null
+    last_event_at: string | null
+    last_event_age_sec: number | null
+}
+
+export type SystemStatusZone = {
+    id: number
+    name: string
+    camera_id: number | null
+    camera_name: string | null
+    barrier_id: number | null
+    barrier_name: string | null
+}
+
+export type SystemStatus = {
+    cameras: SystemStatusCamera[]
+    barriers: SystemStatusBarrier[]
+    ocr_zones: SystemStatusOcrZone[]
+    check_zones: SystemStatusZone[]
+    motion_zones: SystemStatusZone[]
+    whitelist: { active: number; inactive: number }
+    last_sync_at: string | null
+    sync_age_sec: number | null
+}
+
+export type WhitelistEntry = {
+    id: number
+    plate: string
+    fuzzy_plate: string
+    is_active: boolean
+    source: string
+    note: string | null
+    updated_at: string | null
+    last_event_at: string | null
+    last_decision: string | null
+    last_camera_id: number | null
+}
+
+export type WhitelistPage = {
+    entries: WhitelistEntry[]
+    total: number
+    offset: number
+    limit: number
+}
+
 export type PeerZone = {
     id: number
     camera_id: number

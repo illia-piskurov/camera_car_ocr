@@ -8,7 +8,7 @@ from datetime import datetime
 import cv2
 
 from .alpr_service import AlprService
-from .zones import draw_zones
+
 
 
 def write_preview_artifacts(
@@ -90,8 +90,6 @@ def write_recognition_snapshot(
     output_dir: str,
     jpeg_quality: int,
     max_files: int,
-    zones: list[dict[str, object]] | None = None,
-    highlight_zone_id: int | None = None,
     apply_alpr_predictions: bool = True,
 ) -> None:
     os.makedirs(output_dir, exist_ok=True)
@@ -101,11 +99,7 @@ def write_recognition_snapshot(
         try:
             annotated, _ = alpr.draw_predictions(frame)
         except Exception:
-            # Keep snapshot generation resilient even if prediction rendering fails.
             annotated = frame
-
-    if zones is not None:
-        annotated = draw_zones(annotated, zones, highlight_zone_id=highlight_zone_id)
 
     overlay = (
         f"{captured_at.strftime('%Y-%m-%d %H:%M:%S')} | "

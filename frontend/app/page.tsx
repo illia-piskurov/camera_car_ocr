@@ -12,6 +12,8 @@ import { ZonesPanel } from "@/components/ZonesPanel"
 import { BarriersPanel } from "@/components/BarriersPanel"
 import { EventsTable } from "@/components/EventsTable"
 import { OnboardingPanel } from "@/components/OnboardingPanel"
+import { WhitelistPanel } from "@/components/WhitelistPanel"
+import { StatusPanel } from "@/components/StatusPanel"
 import { deleteCamera, saveBarrierCheckZone, deleteBarrierCheckZone, saveZones, saveCameraZones, toEventImageSrc, updateCamera, createMotionZone, updateMotionZone, deleteMotionZone } from "@/lib/api"
 import { useDashboard } from "@/hooks/use-dashboard"
 import type { Barrier, BarrierZone, Camera, DetectionZone, MotionZone } from "@/lib/types"
@@ -36,6 +38,8 @@ export default function Page() {
   const [groupsPanelOpen, setGroupsPanelOpen] = useState(false)
   const [historyPanelOpen, setHistoryPanelOpen] = useState(false)
   const [barriersPanelOpen, setBarriersPanelOpen] = useState(false)
+  const [whitelistPanelOpen, setWhitelistPanelOpen] = useState(false)
+  const [statusPanelOpen, setStatusPanelOpen] = useState(false)
   const [selectedEventId, setSelectedEventId] = useState<number | null>(null)
   const [selectedImageError, setSelectedImageError] = useState<string | null>(null)
   const [zoneDraft, setZoneDraft] = useState<DetectionZone[]>([])
@@ -451,6 +455,8 @@ export default function Page() {
         onDeleteCamera={handleOpenDeleteCamera}
         onOpenGroups={() => setGroupsPanelOpen(true)}
         onOpenHistory={() => setHistoryPanelOpen(true)}
+        onOpenWhitelist={() => setWhitelistPanelOpen(true)}
+        onOpenStatus={() => setStatusPanelOpen(true)}
         syncAgeSec={syncAgeSec}
         onRefresh={() => void refresh()}
         onForceSync={() => void runForceSync()}
@@ -634,6 +640,14 @@ export default function Page() {
           onClose={() => setBarriersPanelOpen(false)}
           onBarriersChanged={() => void refresh()}
         />
+      )}
+
+      {whitelistPanelOpen && (
+        <WhitelistPanel onClose={() => setWhitelistPanelOpen(false)} />
+      )}
+
+      {statusPanelOpen && (
+        <StatusPanel onClose={() => setStatusPanelOpen(false)} />
       )}
 
       <ConfirmationDialog

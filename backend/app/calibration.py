@@ -13,8 +13,9 @@ from .motion_detector import compute_frame_diff
 from .zones import crop_zone
 
 # Fixed crop size for model features (width x height)
-_FEAT_W, _FEAT_H = 32, 16
-_FEAT_N = _FEAT_W * _FEAT_H  # 512 raw-pixel features
+_FEAT_W, _FEAT_H = 16, 8
+# Features: _FEAT_W*_FEAT_H raw pixels + _FEAT_H row-means + _FEAT_W col-means
+_FEAT_N = _FEAT_W * _FEAT_H + _FEAT_H + _FEAT_W  # 128 + 8 + 16 = 152
 
 
 # ---------------------------------------------------------------------------

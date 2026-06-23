@@ -12,6 +12,9 @@ import type {
     PeerZone,
     PreviewData,
     SaveZonesResponse,
+    SystemStatus,
+    WhitelistEntry,
+    WhitelistPage,
     ZonesResponse,
 } from "@/lib/types"
 
@@ -449,10 +452,73 @@ export async function deleteMotionZone(zoneId: number): Promise<void> {
     if (!response.ok) throw new Error(`Delete motion zone failed: ${response.status}`)
 }
 
+export async function fetchSystemStatus(signal?: AbortSignal): Promise<SystemStatus> {
+    const response = await fetch(`${API_BASE}/api/status`, { cache: "no-store", signal })
+    if (!response.ok) throw new Error(`Status request failed: ${response.status}`)
+    return (await response.json()) as SystemStatus
+}
+
+export async function listWhitelist(params: { search?: string; offset?: number; limit?: number } = {}): Promise<WhitelistPage> {
+    const query = new URLSearchParams()
+    if (params.search) query.set("search", params.search)
+    if (params.offset != null) query.set("offset", String(params.offset))
+    if (params.limit != null) query.set("limit", String(params.limit))
+    const response = await fetch(`${API_BASE}/api/whitelist?${query.toString()}`, { cache: "no-store" })
+    if (!response.ok) throw new Error(`List whitelist failed: ${response.status}`)
+    return (await response.json()) as WhitelistPage
+}
+
+export async function addWhitelistPlate(plate: string, note: string = ""): Promise<WhitelistEntry> {
+    const response = await fetch(`${API_BASE}/api/whitelist`, {
+        method: "POST",
+        cache: "no-store",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ plate, note }),
+    })
+    if (!response.ok) {
+        const text = await response.text()
+        throw new Error(`Add plate failed: ${text}`)
+    }
+    const data = (await response.json()) as { entry: WhitelistEntry }
+    return data.entry
+}
+
+export async function updateWhitelistPlate(id: number, payload: { note?: string | null; is_active?: boolean }): Promise<WhitelistEntry> {
+    const response = await fetch(`${API_BASE}/api/whitelist/${id}`, {
+        method: "PUT",
+        cache: "no-store",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+    })
+    if (!response.ok) throw new Error(`Update plate failed: ${response.status}`)
+    const data = (await response.json()) as { entry: WhitelistEntry }
+    return data.entry
+}
+
+export async function deleteWhitelistPlate(id: number): Promise<void> {
+    const response = await fetch(`${API_BASE}/api/whitelist/${id}`, {
+        method: "DELETE",
+        cache: "no-store",
+    })
+    if (!response.ok) throw new Error(`Delete plate failed: ${response.status}`)
+}
+
 export async function clearBarrierCalibration(barrierId: number): Promise<void> {
     const response = await fetch(`${API_BASE}/api/barriers/${barrierId}/calibration`, {
         method: "DELETE",
         cache: "no-store",
     })
     if (!response.ok) throw new Error(`Clear calibration failed: ${response.status}`)
+}
+
+export async function captureCalibrationFrames(barrierId: number, count: number): Promise<{ captured: { id: number; frame_id: string; occurred_at: string }[] }> {
+    const response = await fetch(`${API_BASE}/api/barriers/${barrierId}/calibration/capture?count=${count}`, {
+        method: "POST",
+        cache: "no-store",
+    })
+    if (!response.ok) {
+        const text = await response.text().catch(() => response.statusText)
+        throw new Error(`Capture failed: ${text}`)
+    }
+    return response.json()
 }
