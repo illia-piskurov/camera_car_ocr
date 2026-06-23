@@ -76,15 +76,20 @@ def extract_features(crop: np.ndarray) -> np.ndarray:
     Pipeline:
       1. Resize to _FEAT_W × _FEAT_H
       2. Grayscale
-      3. Flatten + L2-normalise
+      3. Flatten to raw pixels / 255.0
+      4. Append row-means and col-means (no L2-normalisation to preserve brightness information).
 
     Returns float32 vector of length _FEAT_N.
     """
     resized = cv2.resize(crop, (_FEAT_W, _FEAT_H), interpolation=cv2.INTER_AREA)
     gray = cv2.cvtColor(resized, cv2.COLOR_BGR2GRAY) if len(resized.shape) == 3 else resized
-    vec = gray.astype(np.float32).flatten() / 255.0
-    norm = np.linalg.norm(vec)
-    return vec / norm if norm > 1e-9 else vec
+    gray_f = gray.astype(np.float32) / 255.0
+
+    vec = gray_f.flatten()
+    row_means = np.mean(gray_f, axis=1)
+    col_means = np.mean(gray_f, axis=0)
+
+    return np.concatenate([vec, row_means, col_means])
 
 
 # ---------------------------------------------------------------------------
@@ -100,7 +105,7 @@ def _train_logreg(
     y: np.ndarray,
     lr: float = 0.5,
     n_iter: int = 800,
-    lambda_: float = 0.5,
+    lambda_: float = 0.05,
 ) -> tuple[np.ndarray, float]:
     """Train binary logistic regression with L2 regularisation using gradient descent.
 
@@ -160,8 +165,16 @@ class BarrierModel:
         return pickle.dumps(self)
 
     @staticmethod
-    def from_bytes(data: bytes) -> "BarrierModel":
-        return pickle.loads(data)  # noqa: S301
+    def from_bytes(data: bytes) -> BarrierModel | None:
+        try:
+            model = pickle.loads(data)  # noqa: S301
+            if not isinstance(model, BarrierModel):
+                return None
+            if getattr(model, "W", None) is None or model.W.shape[0] != _FEAT_N:
+                return None
+            return model
+        except Exception:
+            return None
 
 
 # ---------------------------------------------------------------------------
