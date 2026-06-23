@@ -592,11 +592,25 @@ def _poll_single_camera(
                     detector._reference_event_id = None  # noqa: SLF001
 
         barrier_states[bid] = state.barrier_detectors[bid].update(frame, bcz, now_monotonic)
+        db.update_barrier_live_state(bid, barrier_states[bid])
         LOG.debug("Barrier state camera=%s barrier=%s state=%s", camera_id, bid, barrier_states[bid])
 
     for bid in list(state.barrier_detectors):
         if bid not in active_barrier_ids:
             del state.barrier_detectors[bid]
+
+    # Cross-camera fallback: for barriers whose check zone is on another camera,
+    # read the last known state written by that camera's worker (max 10s stale).
+    for z in stage.active_zones:
+        bid = z.get("barrier_id")
+        if bid is None:
+            continue
+        bid = int(bid)
+        if bid not in barrier_states:
+            live = db.get_barrier_live_state(bid, max_age_sec=10.0)
+            if live is not None:
+                barrier_states[bid] = live
+                LOG.debug("Barrier state (cross-camera) barrier=%s state=%s", bid, live)
 
     # Detect plates in zones using single-shot detection
     detections: list[PlateDetection] = []

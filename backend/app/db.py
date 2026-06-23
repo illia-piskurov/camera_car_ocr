@@ -71,6 +71,9 @@ class Barrier(Base):
     state_reference_event_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
     state_reference_crop: Mapped[bytes | None] = mapped_column(LargeBinary, nullable=True)
     state_model_data: Mapped[bytes | None] = mapped_column(LargeBinary, nullable=True)
+    # Live state written by whichever camera worker monitors this barrier — shared across workers
+    last_known_state: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    last_state_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
 
@@ -204,6 +207,12 @@ class Database:
                 conn.commit()
             if "state_model_data" not in barrier_cols:
                 conn.execute(text("ALTER TABLE barriers ADD COLUMN state_model_data BLOB"))
+                conn.commit()
+            if "last_known_state" not in barrier_cols:
+                conn.execute(text("ALTER TABLE barriers ADD COLUMN last_known_state VARCHAR(16)"))
+                conn.commit()
+            if "last_state_at" not in barrier_cols:
+                conn.execute(text("ALTER TABLE barriers ADD COLUMN last_state_at DATETIME"))
                 conn.commit()
 
         # Auto-migrate: create Barrier records from existing zone entity IDs
@@ -383,6 +392,25 @@ class Database:
         with self.SessionLocal() as session:
             row = session.get(Barrier, barrier_id)
             return row.state_model_data if row else None
+
+    def update_barrier_live_state(self, barrier_id: int, state: str) -> None:
+        """Write the current detected barrier state so other camera workers can read it."""
+        with self.SessionLocal() as session:
+            row = session.get(Barrier, barrier_id)
+            if row is None:
+                return
+            row.last_known_state = state
+            row.last_state_at = utc_now()
+            session.commit()
+
+    def get_barrier_live_state(self, barrier_id: int, max_age_sec: float = 10.0) -> str | None:
+        """Return the last known barrier state if it was written within max_age_sec, else None."""
+        with self.SessionLocal() as session:
+            row = session.get(Barrier, barrier_id)
+            if row is None or row.last_known_state is None or row.last_state_at is None:
+                return None
+            age = (utc_now() - _utc_or_now(row.last_state_at)).total_seconds()
+            return row.last_known_state if age <= max_age_sec else None
 
     def apply_calibration_threshold(self, barrier_id: int, threshold: float) -> dict[str, object] | None:
         with self.SessionLocal() as session:

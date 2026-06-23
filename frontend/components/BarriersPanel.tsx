@@ -186,21 +186,27 @@ export function BarriersPanel({ onClose, onBarriersChanged }: BarriersPanelProps
                                             Check state before opening (skip if already open)
                                         </label>
                                         {editStateEnabled && (
-                                            <label className="space-y-1 text-[11px] text-slate-400">
-                                                <span>Sensitivity threshold (%)</span>
-                                                <div className="flex items-center gap-2">
-                                                    <input
-                                                        type="number"
-                                                        min={0.1}
-                                                        max={100}
-                                                        step={0.5}
-                                                        value={editThreshold}
-                                                        onChange={(e) => setEditThreshold(e.target.value)}
-                                                        className="w-24 rounded border border-slate-600 bg-slate-900 px-2 py-1 text-xs text-slate-100 outline-none focus:border-amber-400"
-                                                    />
-                                                    <span className="text-slate-500 text-[10px]">% pixels changed → OPEN</span>
-                                                </div>
-                                            </label>
+                                            editingId !== null && barriers.find(b => b.id === editingId)?.has_model ? (
+                                                <p className="text-[10px] text-violet-300/80 rounded bg-violet-500/10 px-2 py-1">
+                                                    Model trained — threshold not used. Use Calibrate to retrain.
+                                                </p>
+                                            ) : (
+                                                <label className="space-y-1 text-[11px] text-slate-400">
+                                                    <span>Sensitivity threshold (%) — fallback when no model</span>
+                                                    <div className="flex items-center gap-2">
+                                                        <input
+                                                            type="number"
+                                                            min={0.1}
+                                                            max={100}
+                                                            step={0.5}
+                                                            value={editThreshold}
+                                                            onChange={(e) => setEditThreshold(e.target.value)}
+                                                            className="w-24 rounded border border-slate-600 bg-slate-900 px-2 py-1 text-xs text-slate-100 outline-none focus:border-amber-400"
+                                                        />
+                                                        <span className="text-slate-500 text-[10px]">% pixels changed → OPEN</span>
+                                                    </div>
+                                                </label>
+                                            )
                                         )}
                                     </div>
                                     <div className="flex gap-2 pt-1">
