@@ -12,6 +12,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from .barrier import BarrierController
+from .barrier_state import BarrierStateDetector
 from .runtime_state import ZoneRuntimeState
 
 LOG = logging.getLogger(__name__)
@@ -29,6 +30,7 @@ class PipelineState:
     last_preview_write_ts: float = 0.0
     last_no_zone_warning_ts: float = 0.0
     prev_frame: Any = None  # np.ndarray | None — kept for motion detection
+    barrier_detector: BarrierStateDetector | None = None
     # Suppress repeated deny/observed events for same plate+zone
     _deny_ts: dict[tuple[str, int | None], float] = field(default_factory=dict)
     _observed_ts: dict[tuple[str, int | None], float] = field(default_factory=dict)
@@ -59,17 +61,20 @@ class PipelineState:
     def mark_zone_event(self, zone_id: int | None) -> None:
         self._zone_cooldown_ts[zone_id] = time.monotonic()
 
-    def close_all_zones(self, barrier: BarrierController, open_only: bool = False) -> None:
+    def close_all_zones(
+        self,
+        barrier: BarrierController,
+        open_only: bool = False,
+        barrier_state: str | None = None,
+    ) -> None:
         """Close all currently open zones whose deadline has expired.
 
-        When open_only=True (BARRIER_OPEN_ONLY mode), skips the close command
-        entirely — the barrier's own auto-close timer handles closing. This
-        prevents command competition with a guard's manual remote on
-        toggle/impulse barriers where open and close are the same pulse.
-
-        Deduplicates close commands by entity_id so that multiple zones mapped
-        to the same toggle/impulse button only send one press.
+        open_only: skip close commands (for barriers with own auto-close timer).
+        barrier_state: current detected barrier state string from BarrierStateDetector.
+          If CLOSED — skip close command (already closed, would toggle open).
         """
+        from .barrier_state import CLOSED as BS_CLOSED
+
         now_monotonic = time.monotonic()
         closed_entities: set[str] = set()
 
@@ -81,6 +86,15 @@ class PipelineState:
             if open_only:
                 LOG.info(
                     "Barrier close skipped (open_only mode) plate=%s zone=%s",
+                    state.last_plate,
+                    zone_id if zone_id is not None else "full",
+                )
+                state.clear()
+                continue
+
+            if barrier_state == BS_CLOSED:
+                LOG.info(
+                    "Barrier close skipped (camera: already closed) plate=%s zone=%s",
                     state.last_plate,
                     zone_id if zone_id is not None else "full",
                 )

@@ -55,6 +55,17 @@ export type DetectionZone = {
     ha_close_entity_id?: string
     cross_camera_enabled: boolean
     cross_zone_id: number | null
+    zone_type?: string
+}
+
+export type BarrierZone = {
+    id: number
+    name?: string
+    x_min: number
+    y_min: number
+    x_max: number
+    y_max: number
+    zone_type: "barrier_check"
 }
 
 export type PeerZone = {
@@ -132,6 +143,7 @@ export type PreviewData = {
     last_plate: string | null
     last_decision: string | null
     zones: DetectionZone[]
+    barrier_zone: BarrierZone | null
     max_zones: number
     image_url: string | null
     version: string | null

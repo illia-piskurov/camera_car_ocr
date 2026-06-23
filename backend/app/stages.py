@@ -110,6 +110,7 @@ def execute_barrier_action(
     barrier: BarrierController,
     cfg: Settings,
     zone_states: dict[int | None, ZoneRuntimeState],
+    barrier_state: str | None = None,
 ) -> None:
     """Execute barrier open/close action based on decision.
 
@@ -135,6 +136,8 @@ def execute_barrier_action(
         )
         return
 
+    from .barrier_state import OPEN as BS_OPEN
+
     zone_id = detection.zone_id
     plate = detection.normalized_text
 
@@ -149,6 +152,21 @@ def execute_barrier_action(
             zone_id if zone_id is not None else "full",
             state.close_deadline_monotonic,
         )
+        return
+
+    # Skip open if camera confirms barrier is already open — sending the pulse
+    # would toggle it closed on impulse/toggle-type barriers.
+    if barrier_state == BS_OPEN:
+        LOG.info(
+            "Barrier open skipped (camera: already open) plate=%s zone=%s reason=%s",
+            plate,
+            zone_id if zone_id is not None else "full",
+            reason_code,
+        )
+        # Still mark zone open so motion hold and cooldowns track the vehicle.
+        now_monotonic = time.monotonic()
+        close_delay = max(0.1, cfg.get_zone_close_delay_sec(zone_id))
+        state.mark_open(plate=plate, now_monotonic=now_monotonic, close_delay_sec=close_delay)
         return
 
     # Suppress open if another zone sharing the same entity is already open.

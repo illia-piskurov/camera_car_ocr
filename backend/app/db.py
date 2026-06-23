@@ -90,6 +90,9 @@ class DetectionZone(Base):
     sort_order: Mapped[int] = mapped_column(Integer, default=0)
     cross_camera_enabled: Mapped[bool] = mapped_column(Boolean, default=True)
     cross_zone_id: Mapped[int | None] = mapped_column(Integer, ForeignKey("detection_zones.id", ondelete="SET NULL"), nullable=True)
+    # 'detection' (default) — OCR plate recognition zone
+    # 'barrier_check' — small zone where barrier arm is visible when closed
+    zone_type: Mapped[str] = mapped_column(String(32), default="detection")
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
 
 
@@ -150,6 +153,9 @@ class Database:
                 conn.commit()
             if "cross_zone_id" not in zone_cols:
                 conn.execute(text("ALTER TABLE detection_zones ADD COLUMN cross_zone_id INTEGER REFERENCES detection_zones(id) ON DELETE SET NULL"))
+                conn.commit()
+            if "zone_type" not in zone_cols:
+                conn.execute(text("ALTER TABLE detection_zones ADD COLUMN zone_type VARCHAR(32) NOT NULL DEFAULT 'detection'"))
                 conn.commit()
 
     def _camera_row(self, row: Camera) -> dict[str, object]:
@@ -552,7 +558,8 @@ class Database:
     ) -> list[dict[str, object]]:
         limited = zones[: max(0, max_zones)]
         with self.SessionLocal() as session:
-            stmt = session.query(DetectionZone)
+            # Only delete detection zones — barrier_check zones are managed separately
+            stmt = session.query(DetectionZone).filter(DetectionZone.zone_type == "detection")
             if camera_id is None:
                 stmt = stmt.filter(DetectionZone.camera_id.is_(None))
             else:
@@ -564,6 +571,7 @@ class Database:
                 session.add(
                     DetectionZone(
                         camera_id=camera_id,
+                        zone_type="detection",
                         name=str(zone.get("name") or f"Zone {index + 1}"),
                         ha_open_entity_id=str(zone.get("ha_open_entity_id") or zone.get("open_entity_id") or ""),
                         ha_close_entity_id=str(zone.get("ha_close_entity_id") or zone.get("close_entity_id") or ""),
@@ -584,8 +592,13 @@ class Database:
         return self.get_zones(include_disabled=True, camera_id=camera_id)
 
     def get_zones(self, include_disabled: bool = False, camera_id: int | None = None) -> list[dict[str, object]]:
+        """Return detection zones only (zone_type='detection')."""
         with self.SessionLocal() as session:
-            stmt = select(DetectionZone).order_by(DetectionZone.sort_order.asc(), DetectionZone.id.asc())
+            stmt = (
+                select(DetectionZone)
+                .where(DetectionZone.zone_type == "detection")
+                .order_by(DetectionZone.sort_order.asc(), DetectionZone.id.asc())
+            )
             if camera_id is not None:
                 stmt = stmt.where(DetectionZone.camera_id == camera_id)
             else:
@@ -594,24 +607,73 @@ class Database:
                 stmt = stmt.where(DetectionZone.is_enabled.is_(True))
 
             rows = session.execute(stmt).scalars().all()
-            return [
-                {
-                    "id": row.id,
-                    "camera_id": row.camera_id,
-                    "name": row.name,
-                    "ha_open_entity_id": row.ha_open_entity_id,
-                    "ha_close_entity_id": row.ha_close_entity_id,
-                    "x_min": float(row.x_min),
-                    "y_min": float(row.y_min),
-                    "x_max": float(row.x_max),
-                    "y_max": float(row.y_max),
-                    "is_enabled": bool(row.is_enabled),
-                    "sort_order": int(row.sort_order),
-                    "cross_camera_enabled": bool(row.cross_camera_enabled),
-                    "cross_zone_id": row.cross_zone_id,
-                }
-                for row in rows
-            ]
+            return [self._zone_row(row) for row in rows]
+
+    def _zone_row(self, row: DetectionZone) -> dict[str, object]:
+        return {
+            "id": row.id,
+            "camera_id": row.camera_id,
+            "zone_type": row.zone_type,
+            "name": row.name,
+            "ha_open_entity_id": row.ha_open_entity_id,
+            "ha_close_entity_id": row.ha_close_entity_id,
+            "x_min": float(row.x_min),
+            "y_min": float(row.y_min),
+            "x_max": float(row.x_max),
+            "y_max": float(row.y_max),
+            "is_enabled": bool(row.is_enabled),
+            "sort_order": int(row.sort_order),
+            "cross_camera_enabled": bool(row.cross_camera_enabled),
+            "cross_zone_id": row.cross_zone_id,
+        }
+
+    def get_barrier_check_zone(self, camera_id: int | None) -> dict[str, object] | None:
+        """Return the barrier check zone for a camera, or None if not configured."""
+        with self.SessionLocal() as session:
+            stmt = select(DetectionZone).where(DetectionZone.zone_type == "barrier_check")
+            if camera_id is not None:
+                stmt = stmt.where(DetectionZone.camera_id == camera_id)
+            else:
+                stmt = stmt.where(DetectionZone.camera_id.is_(None))
+            stmt = stmt.limit(1)
+            row = session.execute(stmt).scalars().first()
+            return self._zone_row(row) if row is not None else None
+
+    def replace_barrier_check_zone(
+        self,
+        zone: dict[str, object] | None,
+        camera_id: int | None = None,
+    ) -> dict[str, object] | None:
+        """Set or clear the barrier check zone for a camera."""
+        with self.SessionLocal() as session:
+            stmt = session.query(DetectionZone).filter(DetectionZone.zone_type == "barrier_check")
+            if camera_id is None:
+                stmt = stmt.filter(DetectionZone.camera_id.is_(None))
+            else:
+                stmt = stmt.filter(DetectionZone.camera_id == camera_id)
+            stmt.delete(synchronize_session=False)
+
+            if zone is not None:
+                row = DetectionZone(
+                    camera_id=camera_id,
+                    zone_type="barrier_check",
+                    name=str(zone.get("name") or "Barrier"),
+                    ha_open_entity_id="",
+                    ha_close_entity_id="",
+                    x_min=float(zone.get("x_min", 0.0)),
+                    y_min=float(zone.get("y_min", 0.0)),
+                    x_max=float(zone.get("x_max", 1.0)),
+                    y_max=float(zone.get("y_max", 1.0)),
+                    is_enabled=True,
+                    sort_order=99,
+                    updated_at=utc_now(),
+                )
+                session.add(row)
+                session.commit()
+                return self._zone_row(row)
+
+            session.commit()
+            return None
 
     def set_last_sync_now(self) -> None:
         with self.SessionLocal() as session:

@@ -48,6 +48,15 @@ class ZoneInput(BaseModel):
     sort_order: int = 0
     cross_camera_enabled: bool = True
     cross_zone_id: int | None = None
+    zone_type: str = "detection"
+
+
+class BarrierZoneInput(BaseModel):
+    name: str | None = None
+    x_min: float = Field(ge=0.0, le=1.0)
+    y_min: float = Field(ge=0.0, le=1.0)
+    x_max: float = Field(ge=0.0, le=1.0)
+    y_max: float = Field(ge=0.0, le=1.0)
 
 
 class ZonesPayload(BaseModel):
@@ -521,6 +530,46 @@ def put_camera_zones(camera_id: int, payload: ZonesPayload) -> dict[str, object]
     }
 
 
+@app.get("/api/cameras/{camera_id}/barrier-zone")
+def get_camera_barrier_zone(camera_id: int) -> dict[str, object]:
+    """Get the barrier check zone for a camera."""
+    camera = db.get_camera(camera_id)
+    if camera is None:
+        raise HTTPException(status_code=404, detail=f"Camera {camera_id} not found")
+    zone = db.get_barrier_check_zone(camera_id)
+    return {"zone": zone}
+
+
+@app.put("/api/cameras/{camera_id}/barrier-zone")
+def put_camera_barrier_zone(camera_id: int, payload: BarrierZoneInput) -> dict[str, object]:
+    """Set the barrier check zone for a camera."""
+    camera = db.get_camera(camera_id)
+    if camera is None:
+        raise HTTPException(status_code=404, detail=f"Camera {camera_id} not found")
+    zone_data = sanitize_zone(
+        {
+            "name": payload.name or "Barrier",
+            "x_min": payload.x_min,
+            "y_min": payload.y_min,
+            "x_max": payload.x_max,
+            "y_max": payload.y_max,
+        },
+        default_name="Barrier",
+    )
+    saved = db.replace_barrier_check_zone(zone_data, camera_id=camera_id)
+    return {"zone": saved}
+
+
+@app.delete("/api/cameras/{camera_id}/barrier-zone")
+def delete_camera_barrier_zone(camera_id: int) -> dict[str, object]:
+    """Remove the barrier check zone for a camera."""
+    camera = db.get_camera(camera_id)
+    if camera is None:
+        raise HTTPException(status_code=404, detail=f"Camera {camera_id} not found")
+    db.replace_barrier_check_zone(None, camera_id=camera_id)
+    return {"status": "ok"}
+
+
 @app.get("/api/cameras/{camera_id}/preview")
 def camera_preview_meta(camera_id: int) -> dict[str, object]:
     """Get preview metadata for a specific camera."""
@@ -540,6 +589,7 @@ def camera_preview_meta(camera_id: int) -> dict[str, object]:
         "last_plate": meta.get("last_plate") if isinstance(meta.get("last_plate"), str) else None,
         "last_decision": meta.get("last_decision") if isinstance(meta.get("last_decision"), str) else None,
         "zones": db.get_zones(include_disabled=True, camera_id=camera_id),
+        "barrier_zone": db.get_barrier_check_zone(camera_id),
         "max_zones": cfg.detection_zones_max,
         "image_url": f"/api/cameras/{camera_id}/preview/image" if available else None,
         "version": captured_at if isinstance(captured_at, str) else None,

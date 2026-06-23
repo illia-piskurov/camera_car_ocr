@@ -2,12 +2,14 @@
 
 import type { ReactNode } from "react"
 import { useMemo, useRef, useState } from "react"
-import type { DetectionZone } from "@/lib/types"
+import type { BarrierZone, DetectionZone } from "@/lib/types"
 
 type PreviewWithZonesProps = {
     imageSrc: string | null
     zones: DetectionZone[]
     onChangeZones: (zones: DetectionZone[]) => void
+    barrierZone?: BarrierZone | null
+    onChangeBarrierZone?: (zone: BarrierZone) => void
     headerAction?: ReactNode
 }
 
@@ -35,6 +37,10 @@ type ResizingZone = {
     corner: "tl" | "tr" | "bl" | "br"
 }
 
+type ResizingBarrier = {
+    corner: "tl" | "tr" | "bl" | "br"
+}
+
 function clamp01(value: number): number {
     return Math.max(0, Math.min(1, value))
 }
@@ -43,10 +49,13 @@ export function PreviewWithZones({
     imageSrc,
     zones,
     onChangeZones,
+    barrierZone,
+    onChangeBarrierZone,
     headerAction,
 }: PreviewWithZonesProps) {
     const overlayRef = useRef<HTMLDivElement | null>(null)
     const [resizing, setResizing] = useState<ResizingZone | null>(null)
+    const [resizingBarrier, setResizingBarrier] = useState<ResizingBarrier | null>(null)
 
     const visibleZones = useMemo(() => {
         return [...zones].sort((a, b) => a.sort_order - b.sort_order)
@@ -71,34 +80,63 @@ export function PreviewWithZones({
         setResizing({ zoneIndex, corner })
     }
 
+    function handleBarrierCornerPointerDown(
+        event: React.PointerEvent<HTMLDivElement>,
+        corner: "tl" | "tr" | "bl" | "br"
+    ) {
+        event.stopPropagation()
+        setResizingBarrier({ corner })
+    }
+
     function handlePointerMove(event: React.PointerEvent<HTMLDivElement>) {
-        if (!resizing) return
-        const point = pointToNormalized(event.clientX, event.clientY)
-        if (!point) return
-        const zone = zones[resizing.zoneIndex]
-        if (!zone) return
+        if (resizing) {
+            const point = pointToNormalized(event.clientX, event.clientY)
+            if (!point) return
+            const zone = zones[resizing.zoneIndex]
+            if (!zone) return
 
-        let newZone = { ...zone }
-        if (resizing.corner === "tl") {
-            newZone.x_min = Math.min(point.x, zone.x_max - 0.02)
-            newZone.y_min = Math.min(point.y, zone.y_max - 0.02)
-        } else if (resizing.corner === "tr") {
-            newZone.x_max = Math.max(point.x, zone.x_min + 0.02)
-            newZone.y_min = Math.min(point.y, zone.y_max - 0.02)
-        } else if (resizing.corner === "bl") {
-            newZone.x_min = Math.min(point.x, zone.x_max - 0.02)
-            newZone.y_max = Math.max(point.y, zone.y_min + 0.02)
-        } else if (resizing.corner === "br") {
-            newZone.x_max = Math.max(point.x, zone.x_min + 0.02)
-            newZone.y_max = Math.max(point.y, zone.y_min + 0.02)
+            let newZone = { ...zone }
+            if (resizing.corner === "tl") {
+                newZone.x_min = Math.min(point.x, zone.x_max - 0.02)
+                newZone.y_min = Math.min(point.y, zone.y_max - 0.02)
+            } else if (resizing.corner === "tr") {
+                newZone.x_max = Math.max(point.x, zone.x_min + 0.02)
+                newZone.y_min = Math.min(point.y, zone.y_max - 0.02)
+            } else if (resizing.corner === "bl") {
+                newZone.x_min = Math.min(point.x, zone.x_max - 0.02)
+                newZone.y_max = Math.max(point.y, zone.y_min + 0.02)
+            } else if (resizing.corner === "br") {
+                newZone.x_max = Math.max(point.x, zone.x_min + 0.02)
+                newZone.y_max = Math.max(point.y, zone.y_min + 0.02)
+            }
+
+            const updated = zones.map((z, i) => (i === resizing.zoneIndex ? newZone : z))
+            onChangeZones(updated)
+        } else if (resizingBarrier && barrierZone && onChangeBarrierZone) {
+            const point = pointToNormalized(event.clientX, event.clientY)
+            if (!point) return
+
+            let bz = { ...barrierZone }
+            if (resizingBarrier.corner === "tl") {
+                bz.x_min = Math.min(point.x, barrierZone.x_max - 0.02)
+                bz.y_min = Math.min(point.y, barrierZone.y_max - 0.02)
+            } else if (resizingBarrier.corner === "tr") {
+                bz.x_max = Math.max(point.x, barrierZone.x_min + 0.02)
+                bz.y_min = Math.min(point.y, barrierZone.y_max - 0.02)
+            } else if (resizingBarrier.corner === "bl") {
+                bz.x_min = Math.min(point.x, barrierZone.x_max - 0.02)
+                bz.y_max = Math.max(point.y, barrierZone.y_min + 0.02)
+            } else if (resizingBarrier.corner === "br") {
+                bz.x_max = Math.max(point.x, barrierZone.x_min + 0.02)
+                bz.y_max = Math.max(point.y, barrierZone.y_min + 0.02)
+            }
+            onChangeBarrierZone(bz)
         }
-
-        const updated = zones.map((z, i) => (i === resizing.zoneIndex ? newZone : z))
-        onChangeZones(updated)
     }
 
     function handlePointerUp() {
         setResizing(null)
+        setResizingBarrier(null)
     }
 
     return (
@@ -171,6 +209,40 @@ export function PreviewWithZones({
                                 </div>
                             )
                         })}
+
+                        {/* Barrier Check Zone (amber dashed) */}
+                        {barrierZone && (
+                            <div
+                                className="absolute border-2 border-dashed border-amber-400"
+                                style={{
+                                    left: `${barrierZone.x_min * 100}%`,
+                                    top: `${barrierZone.y_min * 100}%`,
+                                    width: `${(barrierZone.x_max - barrierZone.x_min) * 100}%`,
+                                    height: `${(barrierZone.y_max - barrierZone.y_min) * 100}%`,
+                                }}
+                            >
+                                <span className="absolute -top-6 left-0 rounded bg-black/70 px-2 py-0.5 text-[10px] text-amber-300">
+                                    {barrierZone.name?.trim() || "Barrier zone"}
+                                </span>
+
+                                <div
+                                    className="absolute -top-2 -left-2 size-4 cursor-nwse-resize rounded-full border border-amber-300/50 bg-amber-500/70 hover:bg-amber-400"
+                                    onPointerDown={(e) => handleBarrierCornerPointerDown(e, "tl")}
+                                />
+                                <div
+                                    className="absolute -top-2 -right-2 size-4 cursor-nesw-resize rounded-full border border-amber-300/50 bg-amber-500/70 hover:bg-amber-400"
+                                    onPointerDown={(e) => handleBarrierCornerPointerDown(e, "tr")}
+                                />
+                                <div
+                                    className="absolute -bottom-2 -left-2 size-4 cursor-nesw-resize rounded-full border border-amber-300/50 bg-amber-500/70 hover:bg-amber-400"
+                                    onPointerDown={(e) => handleBarrierCornerPointerDown(e, "bl")}
+                                />
+                                <div
+                                    className="absolute -bottom-2 -right-2 size-4 cursor-nwse-resize rounded-full border border-amber-300/50 bg-amber-500/70 hover:bg-amber-400"
+                                    onPointerDown={(e) => handleBarrierCornerPointerDown(e, "br")}
+                                />
+                            </div>
+                        )}
                     </div>
                 ) : (
                     <div className="flex min-h-64 items-center justify-center px-3 text-center text-sm text-slate-400">

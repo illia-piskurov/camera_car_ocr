@@ -1,4 +1,5 @@
 import type {
+    BarrierZone,
     Camera,
     CameraCreatePayload,
     CameraGroup,
@@ -279,4 +280,27 @@ export async function fetchCameraPeerZones(cameraId: number, signal?: AbortSigna
     if (!response.ok) throw new Error(`Peer zones request failed: ${response.status}`)
     const data = (await response.json()) as { peer_zones: PeerZone[] }
     return data.peer_zones
+}
+
+export async function saveBarrierZone(
+    cameraId: number,
+    zone: { name?: string; x_min: number; y_min: number; x_max: number; y_max: number },
+): Promise<BarrierZone | null> {
+    const response = await fetch(`${API_BASE}/api/cameras/${cameraId}/barrier-zone`, {
+        method: "PUT",
+        cache: "no-store",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(zone),
+    })
+    if (!response.ok) throw new Error(`Save barrier zone failed: ${response.status}`)
+    const data = (await response.json()) as { zone: BarrierZone | null }
+    return data.zone
+}
+
+export async function deleteBarrierZone(cameraId: number): Promise<void> {
+    const response = await fetch(`${API_BASE}/api/cameras/${cameraId}/barrier-zone`, {
+        method: "DELETE",
+        cache: "no-store",
+    })
+    if (!response.ok) throw new Error(`Delete barrier zone failed: ${response.status}`)
 }

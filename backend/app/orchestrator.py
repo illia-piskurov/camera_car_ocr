@@ -13,6 +13,7 @@ import numpy as np
 
 from .alpr_service import AlprService
 from .barrier import BarrierController
+from .barrier_state import BarrierStateDetector
 from .camera import SnapshotCameraClient
 from .config import Settings
 from .db import Database
@@ -185,6 +186,7 @@ def _handle_detections(
     barrier: BarrierController,
     state: PipelineState,
     camera_id: int | None = None,
+    barrier_state: str | None = None,
 ) -> DetectionStageResult:
     result = DetectionStageResult(
         frame_last_decision=None,
@@ -261,6 +263,7 @@ def _handle_detections(
             barrier=barrier,
             cfg=cfg,
             zone_states=state.zone_states,
+            barrier_state=barrier_state,
         )
 
     LOG.info(
@@ -529,6 +532,22 @@ def _poll_single_camera(
         state.close_all_zones(barrier, open_only=cfg.barrier_open_only)
         return
 
+    # Barrier state detection (must run before handle_detections so state is available)
+    now_monotonic = time.monotonic()
+    barrier_state: str | None = None
+    if cfg.barrier_state_enabled:
+        barrier_check_zone = db.get_barrier_check_zone(camera_id)
+        if barrier_check_zone:
+            if state.barrier_detector is None:
+                state.barrier_detector = BarrierStateDetector(
+                    threshold=cfg.barrier_state_threshold,
+                    reference_delay_sec=cfg.barrier_state_reference_delay_sec,
+                )
+            barrier_state = state.barrier_detector.update(frame, barrier_check_zone, now_monotonic)
+            LOG.debug("Barrier state camera=%s state=%s", camera_id, barrier_state)
+        else:
+            state.barrier_detector = None
+
     # Detect plates in zones using single-shot detection
     detections: list[PlateDetection] = []
     zone_frames: dict[int, np.ndarray] = {}
@@ -561,10 +580,18 @@ def _poll_single_camera(
         barrier=barrier,
         state=state,
         camera_id=camera_id,
+        barrier_state=barrier_state,
     )
 
+    # Notify detector after a successful open so it schedules reference capture
+    if (
+        cfg.barrier_state_enabled
+        and state.barrier_detector is not None
+        and detection_result.frame_last_decision == "open"
+    ):
+        state.barrier_detector.notify_opened(now_monotonic)
+
     # Manage zone hold times
-    now_monotonic = time.monotonic()
     _refresh_zone_hold(
         detections=detections,
         cfg=cfg,
@@ -581,7 +608,7 @@ def _poll_single_camera(
             now_monotonic=now_monotonic,
         )
     state.prev_frame = frame
-    state.close_all_zones(barrier, open_only=cfg.barrier_open_only)
+    state.close_all_zones(barrier, open_only=cfg.barrier_open_only, barrier_state=barrier_state)
 
     # Generate artifacts (snapshots and preview)
     _snapshot_stage(

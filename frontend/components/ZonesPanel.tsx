@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState } from "react"
 import { Button } from "@/components/ui/button"
 import { fetchCameraPeerZones } from "@/lib/api"
-import type { DetectionZone, PeerZone } from "@/lib/types"
+import type { BarrierZone, DetectionZone, PeerZone } from "@/lib/types"
 
 type ZonesPanelProps = {
     zones: DetectionZone[]
@@ -18,6 +18,14 @@ type ZonesPanelProps = {
     onResetZones: () => void
     onUpdateZone: (index: number, updater: (zone: DetectionZone) => DetectionZone) => void
     onRemoveZone: (index: number) => void
+    barrierZone: BarrierZone | null
+    barrierZoneDirty: boolean
+    barrierZoneSaving: boolean
+    barrierZoneMessage: string | null
+    onSetBarrierZone: () => void
+    onSaveBarrierZone: () => void
+    onDeleteBarrierZone: () => void
+    onResetBarrierZone: () => void
 }
 
 function inferZoneLabel(zone: DetectionZone, fallbackIndex: number): string {
@@ -51,6 +59,14 @@ export function ZonesPanel({
     onResetZones,
     onUpdateZone,
     onRemoveZone,
+    barrierZone,
+    barrierZoneDirty,
+    barrierZoneSaving,
+    barrierZoneMessage,
+    onSetBarrierZone,
+    onSaveBarrierZone,
+    onDeleteBarrierZone,
+    onResetBarrierZone,
 }: ZonesPanelProps) {
     const visibleZones = useMemo(() => {
         return [...zones].sort((a, b) => a.sort_order - b.sort_order)
@@ -291,6 +307,69 @@ export function ZonesPanel({
 
             {/* Status Message */}
             {zonesMessage && <p className={`text-xs ${messageColor}`}>{zonesMessage}</p>}
+
+            {/* Barrier Detection Zone */}
+            <div className="border-t border-slate-700/70 pt-3 space-y-2">
+                <h3 className="text-xs uppercase tracking-widest text-amber-400/80">Barrier Detection Zone</h3>
+                <p className="text-[11px] text-slate-400">
+                    Draw a zone over the barrier area on the preview image. The system will use it to detect whether the barrier is open or closed.
+                </p>
+
+                {barrierZone ? (
+                    <div className="space-y-2 rounded border border-amber-500/30 bg-amber-500/5 p-2">
+                        <p className="text-[11px] text-amber-300">
+                            Zone configured. Drag the amber handles on the preview to adjust.
+                        </p>
+                        <div className="flex gap-2">
+                            <Button
+                                size="sm"
+                                variant="default"
+                                onClick={onSaveBarrierZone}
+                                disabled={!barrierZoneDirty || barrierZoneSaving}
+                                className="flex-1 border border-amber-500/30 bg-amber-600/80 text-amber-50 hover:bg-amber-500"
+                            >
+                                {barrierZoneSaving ? "Saving..." : "Save"}
+                            </Button>
+                            <Button
+                                size="sm"
+                                variant="secondary"
+                                onClick={onResetBarrierZone}
+                                disabled={!barrierZoneDirty}
+                                className="border border-slate-600/70 bg-slate-700/80 text-slate-100 hover:bg-slate-600/90"
+                            >
+                                Reset
+                            </Button>
+                            <Button
+                                size="sm"
+                                variant="secondary"
+                                onClick={onDeleteBarrierZone}
+                                disabled={barrierZoneSaving}
+                                className="border border-red-500/40 bg-red-500/10 text-red-300 hover:bg-red-500/20"
+                            >
+                                Delete
+                            </Button>
+                        </div>
+                    </div>
+                ) : (
+                    <div className="space-y-2">
+                        <p className="text-[11px] text-slate-500">No zone configured.</p>
+                        <Button
+                            size="sm"
+                            variant="secondary"
+                            onClick={onSetBarrierZone}
+                            className="w-full border border-amber-500/30 bg-amber-500/10 text-amber-200 hover:bg-amber-500/20"
+                        >
+                            + Set Barrier Zone
+                        </Button>
+                    </div>
+                )}
+
+                {barrierZoneMessage && (
+                    <p className={`text-xs ${barrierZoneMessage.toLowerCase().includes("saved") || barrierZoneMessage.toLowerCase().includes("deleted") ? "text-emerald-300" : "text-red-300"}`}>
+                        {barrierZoneMessage}
+                    </p>
+                )}
+            </div>
         </section>
     )
 }

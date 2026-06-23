@@ -11,9 +11,9 @@ import { PreviewWithZones } from "@/components/PreviewWithZones"
 import { ZonesPanel } from "@/components/ZonesPanel"
 import { EventsTable } from "@/components/EventsTable"
 import { OnboardingPanel } from "@/components/OnboardingPanel"
-import { deleteCamera, saveZones, saveCameraZones, toEventImageSrc, updateCamera } from "@/lib/api"
+import { deleteCamera, deleteBarrierZone, saveZones, saveCameraZones, saveBarrierZone, toEventImageSrc, updateCamera } from "@/lib/api"
 import { useDashboard } from "@/hooks/use-dashboard"
-import type { Camera, DetectionZone } from "@/lib/types"
+import type { BarrierZone, Camera, DetectionZone } from "@/lib/types"
 
 function formatTime(value: string | null | undefined) {
   if (!value) {
@@ -41,6 +41,12 @@ export default function Page() {
   const [zonesSaving, setZonesSaving] = useState(false)
   const [zonesMessage, setZonesMessage] = useState<string | null>(null)
 
+  const [barrierZoneSaved, setBarrierZoneSaved] = useState<BarrierZone | null>(null)
+  const [barrierZoneDraft, setBarrierZoneDraft] = useState<BarrierZone | null>(null)
+  const [barrierZoneDirty, setBarrierZoneDirty] = useState(false)
+  const [barrierZoneSaving, setBarrierZoneSaving] = useState(false)
+  const [barrierZoneMessage, setBarrierZoneMessage] = useState<string | null>(null)
+
   // Set default camera on first load
   useEffect(() => {
     if (cameras.length > 0 && selectedCameraId === null) {
@@ -48,6 +54,14 @@ export default function Page() {
       setSelectedCameraId(activeCamera?.id ?? cameras[0]?.id ?? null)
     }
   }, [cameras, selectedCameraId])
+
+  // Reset dirty state when camera changes
+  useEffect(() => {
+    setZonesDirty(false)
+    setZonesMessage(null)
+    setBarrierZoneDirty(false)
+    setBarrierZoneMessage(null)
+  }, [selectedCameraId])
 
   useEffect(() => {
     if (cameraFormMode === "edit" && cameraFormCamera) {
@@ -63,6 +77,14 @@ export default function Page() {
       setZoneDraft(preview.zones)
     }
   }, [preview, zonesDirty])
+
+  useEffect(() => {
+    if (!barrierZoneDirty) {
+      const bz = preview?.barrier_zone ?? null
+      setBarrierZoneSaved(bz)
+      setBarrierZoneDraft(bz)
+    }
+  }, [preview, barrierZoneDirty])
 
   const selectedEvent = data?.recent_events.find((event) => event.id === selectedEventId) ?? null
   const selectedImageSrc = selectedEventId !== null ? toEventImageSrc(selectedEventId) : null
@@ -202,6 +224,67 @@ export default function Page() {
     setZonesMessage(null)
   }
 
+  function handleSetBarrierZone() {
+    const draft: BarrierZone = {
+      id: -1,
+      x_min: 0.3,
+      y_min: 0.2,
+      x_max: 0.7,
+      y_max: 0.8,
+      zone_type: "barrier_check",
+    }
+    setBarrierZoneDraft(draft)
+    setBarrierZoneDirty(true)
+    setBarrierZoneMessage(null)
+  }
+
+  function handleChangeBarrierZone(zone: BarrierZone) {
+    setBarrierZoneDraft(zone)
+    setBarrierZoneDirty(true)
+    setBarrierZoneMessage(null)
+  }
+
+  async function handleSaveBarrierZone() {
+    if (!selectedCameraId || !barrierZoneDraft) return
+    setBarrierZoneSaving(true)
+    setBarrierZoneMessage(null)
+    try {
+      const saved = await saveBarrierZone(selectedCameraId, barrierZoneDraft)
+      setBarrierZoneSaved(saved)
+      setBarrierZoneDraft(saved)
+      setBarrierZoneDirty(false)
+      setBarrierZoneMessage("Barrier zone saved")
+      await refresh()
+    } catch (saveError) {
+      setBarrierZoneMessage(saveError instanceof Error ? saveError.message : "Failed to save barrier zone")
+    } finally {
+      setBarrierZoneSaving(false)
+    }
+  }
+
+  async function handleDeleteBarrierZone() {
+    if (!selectedCameraId) return
+    setBarrierZoneSaving(true)
+    setBarrierZoneMessage(null)
+    try {
+      await deleteBarrierZone(selectedCameraId)
+      setBarrierZoneSaved(null)
+      setBarrierZoneDraft(null)
+      setBarrierZoneDirty(false)
+      setBarrierZoneMessage("Barrier zone deleted")
+      await refresh()
+    } catch (deleteError) {
+      setBarrierZoneMessage(deleteError instanceof Error ? deleteError.message : "Failed to delete barrier zone")
+    } finally {
+      setBarrierZoneSaving(false)
+    }
+  }
+
+  function handleResetBarrierZone() {
+    setBarrierZoneDraft(barrierZoneSaved)
+    setBarrierZoneDirty(false)
+    setBarrierZoneMessage(null)
+  }
 
   return (
     <main className="min-h-svh bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900 text-slate-100">
@@ -253,6 +336,8 @@ export default function Page() {
                 setZonesDirty(true)
                 setZonesMessage(null)
               }}
+              barrierZone={barrierZoneDraft}
+              onChangeBarrierZone={handleChangeBarrierZone}
               headerAction={
                 selectedCamera ? (
                   <button
@@ -293,6 +378,14 @@ export default function Page() {
               onResetZones={handleResetZones}
               onUpdateZone={handleUpdateZone}
               onRemoveZone={handleRemoveZone}
+              barrierZone={barrierZoneDraft}
+              barrierZoneDirty={barrierZoneDirty}
+              barrierZoneSaving={barrierZoneSaving}
+              barrierZoneMessage={barrierZoneMessage}
+              onSetBarrierZone={handleSetBarrierZone}
+              onSaveBarrierZone={() => void handleSaveBarrierZone()}
+              onDeleteBarrierZone={() => void handleDeleteBarrierZone()}
+              onResetBarrierZone={handleResetBarrierZone}
             />
           </div>
         </section>

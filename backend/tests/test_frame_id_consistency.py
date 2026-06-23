@@ -62,6 +62,11 @@ def test_run_uses_single_frame_fetch_per_cycle(monkeypatch) -> None:
                 }
             ]
 
+        @staticmethod
+        def get_barrier_check_zone(camera_id: int):
+            _ = camera_id
+            return None
+
     class BarrierStub:
         @staticmethod
         def close(reason: str, plate: str | None, zone_id: int | None = None) -> bool:
@@ -92,6 +97,12 @@ def test_run_uses_single_frame_fetch_per_cycle(monkeypatch) -> None:
         get_camera_credentials_encryption_key=lambda: "test-key",
         get_alpr_detector_providers=lambda: None,
         get_alpr_ocr_providers=lambda: None,
+        barrier_open_only=False,
+        motion_hold_enabled=False,
+        motion_hold_threshold=0.02,
+        barrier_state_enabled=False,
+        barrier_state_threshold=0.05,
+        barrier_state_reference_delay_sec=3.0,
     )
 
     def fake_detect_in_zones(*, frame, alpr, detected_at, frame_id, active_zones):
