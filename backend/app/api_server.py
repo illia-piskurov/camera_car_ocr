@@ -274,6 +274,7 @@ def get_barrier_calibration(barrier_id: int, limit: int = Query(default=100, le=
         threshold=float(barrier.get("state_threshold") or 0.05),
         existing_labels=existing_labels,
         snapshot_dir=cfg.recognition_snapshot_dir,
+        max_samples=limit,
         model=model,
     )
 
