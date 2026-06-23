@@ -20,12 +20,28 @@ interface BarrierCalibrationPanelProps {
     onBarrierUpdated: (barrier: Barrier) => void
 }
 
-function DiffBadge({ score, threshold }: { score: number | null; threshold: number }) {
-    if (score === null) return <span className="text-slate-500 text-[10px]">no ref</span>
-    const isOpen = score > threshold
+function PredictionBadge({
+    sample,
+    threshold,
+    hasModel,
+}: {
+    sample: CalibrationSample
+    threshold: number
+    hasModel: boolean
+}) {
+    if (hasModel && sample.model_prob !== null) {
+        const isOpen = sample.model_prob >= 0.5
+        return (
+            <span className={`rounded px-1.5 py-0.5 text-[10px] font-medium ${isOpen ? "bg-emerald-500/20 text-emerald-300" : "bg-red-500/20 text-red-300"}`}>
+                {isOpen ? "OPEN" : "CLOSED"} {(sample.model_prob * 100).toFixed(0)}%
+            </span>
+        )
+    }
+    if (sample.diff_score === null) return <span className="text-slate-500 text-[10px]">no ref</span>
+    const isOpen = sample.diff_score > threshold
     return (
         <span className={`rounded px-1.5 py-0.5 text-[10px] font-medium ${isOpen ? "bg-emerald-500/20 text-emerald-300" : "bg-red-500/20 text-red-300"}`}>
-            {isOpen ? "OPEN" : "CLOSED"} {(score * 100).toFixed(1)}%
+            {isOpen ? "OPEN" : "CLOSED"} Δ{(sample.diff_score * 100).toFixed(1)}%
         </span>
     )
 }
@@ -33,12 +49,14 @@ function DiffBadge({ score, threshold }: { score: number | null; threshold: numb
 function SampleCard({
     sample,
     threshold,
+    hasModel,
     onLabel,
     onSetReference,
     isSettingRef,
 }: {
     sample: CalibrationSample
     threshold: number
+    hasModel: boolean
     onLabel: (label: "open" | "closed" | null) => void
     onSetReference: () => void
     isSettingRef: boolean
@@ -66,7 +84,7 @@ function SampleCard({
                     <p className="truncate text-[10px] text-slate-400">
                         {sample.occurred_at ? new Date(sample.occurred_at).toLocaleString("uk-UA", { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" }) : "—"}
                     </p>
-                    <DiffBadge score={sample.diff_score} threshold={threshold} />
+                    <PredictionBadge sample={sample} threshold={threshold} hasModel={hasModel} />
                 </div>
                 <button
                     type="button"
@@ -118,21 +136,31 @@ function SampleCard({
     )
 }
 
+const LIMIT_OPTIONS = [60, 100, 200, 500]
+
 export function BarrierCalibrationPanel({ barrier, onClose, onBarrierUpdated }: BarrierCalibrationPanelProps) {
     const [data, setData] = useState<CalibrationData | null>(null)
     const [loading, setLoading] = useState(true)
     const [error, setError] = useState<string | null>(null)
-    const [applyResult, setApplyResult] = useState<{ threshold: number; accuracy: number | null; n_open: number; n_closed: number } | null>(null)
+    const [limit, setLimit] = useState(100)
+    const [applyResult, setApplyResult] = useState<{
+        threshold: number
+        diff_accuracy: number | null
+        model_accuracy: number | null
+        n_open: number
+        n_closed: number
+        n_total_labeled: number
+    } | null>(null)
     const [applyBusy, setApplyBusy] = useState(false)
     const [clearBusy, setClearBusy] = useState(false)
     const [settingRefFor, setSettingRefFor] = useState<number | null>(null)
     const [pendingLabels, setPendingLabels] = useState<Record<number, boolean>>({})
 
-    const load = useCallback(async () => {
+    const load = useCallback(async (lim: number) => {
         setLoading(true)
         setError(null)
         try {
-            const result = await getBarrierCalibration(barrier.id)
+            const result = await getBarrierCalibration(barrier.id, lim)
             setData(result)
         } catch (err) {
             setError(err instanceof Error ? err.message : "Failed to load calibration data")
@@ -142,8 +170,8 @@ export function BarrierCalibrationPanel({ barrier, onClose, onBarrierUpdated }: 
     }, [barrier.id])
 
     useEffect(() => {
-        void load()
-    }, [load])
+        void load(limit)
+    }, [load, limit])
 
     async function handleLabel(eventId: number, label: "open" | "closed" | null) {
         setPendingLabels((prev) => ({ ...prev, [eventId]: true }))
@@ -171,7 +199,7 @@ export function BarrierCalibrationPanel({ barrier, onClose, onBarrierUpdated }: 
         try {
             const updatedBarrier = await setCalibrationReference(barrier.id, eventId)
             onBarrierUpdated(updatedBarrier)
-            await load()
+            await load(limit)
         } catch (err) {
             setError(err instanceof Error ? err.message : "Failed to set reference")
         } finally {
@@ -186,7 +214,7 @@ export function BarrierCalibrationPanel({ barrier, onClose, onBarrierUpdated }: 
         try {
             const result = await applyBarrierCalibration(barrier.id)
             setApplyResult(result)
-            await load()
+            await load(limit)
         } catch (err) {
             setError(err instanceof Error ? err.message : "Failed to apply calibration")
         } finally {
@@ -199,7 +227,7 @@ export function BarrierCalibrationPanel({ barrier, onClose, onBarrierUpdated }: 
         setError(null)
         try {
             await clearBarrierCalibration(barrier.id)
-            await load()
+            await load(limit)
             setApplyResult(null)
         } catch (err) {
             setError(err instanceof Error ? err.message : "Failed to clear labels")
@@ -209,6 +237,7 @@ export function BarrierCalibrationPanel({ barrier, onClose, onBarrierUpdated }: 
     }
 
     const threshold = data?.threshold ?? barrier.state_threshold
+    const hasModel = data?.has_model ?? barrier.has_model
     const samples = data?.samples ?? []
     const nLabeled = samples.filter((s) => s.user_label).length
     const nClosed = samples.filter((s) => s.user_label === "closed").length
@@ -224,12 +253,23 @@ export function BarrierCalibrationPanel({ barrier, onClose, onBarrierUpdated }: 
                         <h2 className="text-sm font-semibold text-slate-200">
                             Calibrate: {barrier.name || `Barrier ${barrier.id}`}
                         </h2>
-                        <p className="text-[11px] text-slate-500">Label event photos to tune the open/closed threshold</p>
+                        <p className="text-[11px] text-slate-500">Label event photos to train the open/closed detector</p>
                     </div>
                     <div className="flex items-center gap-2">
+                        {/* Limit selector */}
+                        <select
+                            value={limit}
+                            onChange={(e) => setLimit(Number(e.target.value))}
+                            className="rounded border border-slate-600 bg-slate-800 px-2 py-1 text-[11px] text-slate-300 outline-none focus:border-amber-400"
+                            title="Number of photos to load"
+                        >
+                            {LIMIT_OPTIONS.map((n) => (
+                                <option key={n} value={n}>{n} photos</option>
+                            ))}
+                        </select>
                         <button
                             type="button"
-                            onClick={() => void load()}
+                            onClick={() => void load(limit)}
                             disabled={loading}
                             className="rounded p-1.5 text-slate-400 hover:bg-slate-700/60 hover:text-slate-100"
                             title="Reload"
@@ -251,16 +291,23 @@ export function BarrierCalibrationPanel({ barrier, onClose, onBarrierUpdated }: 
                     <span className={`rounded px-2 py-0.5 ${data?.has_reference ? "bg-amber-500/20 text-amber-300" : "bg-slate-700/60 text-slate-400"}`}>
                         {data?.has_reference ? `Reference set (event #${data.reference_event_id})` : "No reference — pick one below"}
                     </span>
-                    <span className="text-slate-400">
-                        Threshold: <span className="text-slate-200">{(threshold * 100).toFixed(1)}%</span>
-                    </span>
+                    {hasModel ? (
+                        <span className="rounded px-2 py-0.5 bg-violet-500/20 text-violet-300">
+                            Model active
+                        </span>
+                    ) : (
+                        <span className="text-slate-400">
+                            Threshold: <span className="text-slate-200">{(threshold * 100).toFixed(1)}%</span>
+                        </span>
+                    )}
                     <span className="text-slate-400">
                         Labeled: <span className="text-red-300">{nClosed} closed</span> / <span className="text-emerald-300">{nOpen} open</span>
                     </span>
                     {applyResult && (
-                        <span className="text-emerald-300">
-                            Applied: threshold={`${(applyResult.threshold * 100).toFixed(1)}%`}
-                            {applyResult.accuracy !== null && `, accuracy=${(applyResult.accuracy * 100).toFixed(0)}%`}
+                        <span className="text-violet-300">
+                            Trained on {applyResult.n_total_labeled} samples
+                            {applyResult.model_accuracy !== null && ` · model ${(applyResult.model_accuracy * 100).toFixed(0)}%`}
+                            {applyResult.diff_accuracy !== null && ` · diff ${(applyResult.diff_accuracy * 100).toFixed(0)}%`}
                         </span>
                     )}
                 </div>
@@ -276,7 +323,7 @@ export function BarrierCalibrationPanel({ barrier, onClose, onBarrierUpdated }: 
                     <div className="shrink-0 px-4 py-2 text-[11px] text-amber-300/80 bg-amber-500/5 border-b border-amber-500/20">
                         Step 1: Find a photo where the barrier is clearly <strong>CLOSED</strong> and click &quot;Set as closed reference&quot;.
                         Step 2: Label other photos as Open or Closed.
-                        Step 3: Click &quot;Apply&quot; to compute the optimal threshold.
+                        Step 3: Click &quot;Apply&quot; to train the model.
                     </div>
                 )}
 
@@ -293,6 +340,7 @@ export function BarrierCalibrationPanel({ barrier, onClose, onBarrierUpdated }: 
                                 key={sample.event_id}
                                 sample={sample}
                                 threshold={threshold}
+                                hasModel={hasModel}
                                 onLabel={(label) => void handleLabel(sample.event_id, label)}
                                 onSetReference={() => void handleSetReference(sample.event_id)}
                                 isSettingRef={settingRefFor === sample.event_id}
@@ -307,10 +355,10 @@ export function BarrierCalibrationPanel({ barrier, onClose, onBarrierUpdated }: 
                         size="sm"
                         onClick={() => void handleApply()}
                         disabled={!canApply || applyBusy}
-                        className="flex-1 border border-amber-500/30 bg-amber-600/80 text-amber-50 hover:bg-amber-500 disabled:opacity-40"
+                        className="flex-1 border border-violet-500/30 bg-violet-600/80 text-violet-50 hover:bg-violet-500 disabled:opacity-40"
                         title={!data?.has_reference ? "Set a reference first" : nLabeled < 2 ? "Label at least 1 open and 1 closed photo" : ""}
                     >
-                        {applyBusy ? "Applying…" : "Apply Calibration"}
+                        {applyBusy ? "Training…" : hasModel ? "Retrain Model" : "Train Model"}
                     </Button>
                     <Button
                         size="sm"

@@ -14,7 +14,7 @@ import numpy as np
 from .alpr_service import AlprService
 from .barrier import BarrierController
 from .barrier_state import BarrierStateDetector
-from .calibration import bytes_to_crop
+from .calibration import BarrierModel, bytes_to_crop
 from .camera import SnapshotCameraClient
 from .config import Settings
 from .db import Database
@@ -557,13 +557,17 @@ def _poll_single_camera(
         per_threshold = float(barrier_cfg.get("state_threshold") or cfg.barrier_state_threshold)
         ref_event_id = barrier_cfg.get("state_reference_event_id")
 
+        model_bytes = db.get_barrier_model(bid)
+        model = BarrierModel.from_bytes(model_bytes) if model_bytes else None
+
         if bid not in state.barrier_detectors:
             detector = BarrierStateDetector(
                 threshold=per_threshold,
                 reference_delay_sec=cfg.barrier_state_reference_delay_sec,
             )
-            # Load calibrated closed-state reference if set
-            if ref_event_id is not None:
+            if model is not None:
+                detector.set_model(model)
+            elif ref_event_id is not None:
                 ref_bytes = db.get_barrier_reference_crop(bid)
                 if ref_bytes:
                     ref_crop = bytes_to_crop(ref_bytes)
@@ -572,8 +576,11 @@ def _poll_single_camera(
             state.barrier_detectors[bid] = detector
         else:
             detector = state.barrier_detectors[bid]
-            # Reload reference if it changed (e.g., user recalibrated)
-            if ref_event_id != detector.reference_event_id:
+            # Refresh model / reference if DB changed (user recalibrated)
+            if model is not None:
+                if detector._model is None or model.decision_threshold != detector._model.decision_threshold:  # noqa: SLF001
+                    detector.set_model(model)
+            elif ref_event_id != detector.reference_event_id:
                 if ref_event_id is not None:
                     ref_bytes = db.get_barrier_reference_crop(bid)
                     if ref_bytes:
@@ -581,7 +588,6 @@ def _poll_single_camera(
                         if ref_crop is not None:
                             detector.set_closed_reference(ref_crop, threshold=per_threshold, event_id=int(ref_event_id))
                 else:
-                    # Reference cleared — fall back to open-ref mode (will reset to UNKNOWN until open command)
                     detector._reference = None  # noqa: SLF001
                     detector._reference_event_id = None  # noqa: SLF001
 

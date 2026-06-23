@@ -50,6 +50,7 @@ export type Barrier = {
     state_threshold: number
     state_reference_event_id: number | null
     has_reference: boolean
+    has_model: boolean
     created_at: string
     updated_at: string
 }
@@ -60,6 +61,7 @@ export type CalibrationSample = {
     image_url: string
     crop_b64: string | null
     diff_score: number | null
+    model_prob: number | null
     predicted_label: "open" | "closed" | null
     user_label: "open" | "closed" | null
 }
@@ -68,6 +70,7 @@ export type CalibrationData = {
     barrier_id: number
     reference_event_id: number | null
     has_reference: boolean
+    has_model: boolean
     threshold: number
     samples: CalibrationSample[]
     error?: string

@@ -238,11 +238,22 @@ export function BarriersPanel({ onClose, onBarriersChanged }: BarriersPanelProps
                                                 Close: {barrier.ha_close_entity_id || <span className="text-slate-600">—</span>}
                                             </p>
                                             {barrier.state_check_enabled && (
-                                                <p className="text-[10px] mt-1">
+                                                <p className="text-[10px] mt-1 flex flex-wrap gap-1">
                                                     <span className="rounded bg-amber-500/20 px-1.5 py-0.5 text-amber-300">
-                                                        State check ON · {(barrier.state_threshold * 100).toFixed(1)}%
-                                                        {barrier.has_reference ? " · calibrated" : " · no reference"}
+                                                        State check ON
+                                                        {!barrier.has_model && ` · ${(barrier.state_threshold * 100).toFixed(1)}%`}
+                                                        {!barrier.has_reference && !barrier.has_model && " · no reference"}
                                                     </span>
+                                                    {barrier.has_model && (
+                                                        <span className="rounded bg-violet-500/20 px-1.5 py-0.5 text-violet-300">
+                                                            model trained
+                                                        </span>
+                                                    )}
+                                                    {barrier.has_reference && !barrier.has_model && (
+                                                        <span className="rounded bg-slate-700/60 px-1.5 py-0.5 text-slate-400">
+                                                            ref only
+                                                        </span>
+                                                    )}
                                                 </p>
                                             )}
                                         </div>

@@ -377,7 +377,14 @@ export async function setCalibrationLabel(barrierId: number, eventId: number, la
     if (!response.ok) throw new Error(`Set label failed: ${response.status}`)
 }
 
-export async function applyBarrierCalibration(barrierId: number): Promise<{ threshold: number; accuracy: number | null; n_open: number; n_closed: number }> {
+export async function applyBarrierCalibration(barrierId: number): Promise<{
+    threshold: number
+    diff_accuracy: number | null
+    model_accuracy: number | null
+    n_open: number
+    n_closed: number
+    n_total_labeled: number
+}> {
     const response = await fetch(`${API_BASE}/api/barriers/${barrierId}/calibration/apply`, {
         method: "POST",
         cache: "no-store",
@@ -386,7 +393,14 @@ export async function applyBarrierCalibration(barrierId: number): Promise<{ thre
         const text = await response.text()
         throw new Error(`Apply calibration failed: ${text}`)
     }
-    return (await response.json()) as { threshold: number; accuracy: number | null; n_open: number; n_closed: number }
+    return (await response.json()) as {
+        threshold: number
+        diff_accuracy: number | null
+        model_accuracy: number | null
+        n_open: number
+        n_closed: number
+        n_total_labeled: number
+    }
 }
 
 export async function clearBarrierCalibration(barrierId: number): Promise<void> {

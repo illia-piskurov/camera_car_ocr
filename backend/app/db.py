@@ -70,6 +70,7 @@ class Barrier(Base):
     state_threshold: Mapped[float] = mapped_column(Float, default=0.05)
     state_reference_event_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
     state_reference_crop: Mapped[bytes | None] = mapped_column(LargeBinary, nullable=True)
+    state_model_data: Mapped[bytes | None] = mapped_column(LargeBinary, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
 
@@ -201,6 +202,9 @@ class Database:
             if "state_reference_crop" not in barrier_cols:
                 conn.execute(text("ALTER TABLE barriers ADD COLUMN state_reference_crop BLOB"))
                 conn.commit()
+            if "state_model_data" not in barrier_cols:
+                conn.execute(text("ALTER TABLE barriers ADD COLUMN state_model_data BLOB"))
+                conn.commit()
 
         # Auto-migrate: create Barrier records from existing zone entity IDs
         self._auto_migrate_entities_to_barriers()
@@ -280,6 +284,7 @@ class Database:
             "state_threshold": float(row.state_threshold) if row.state_threshold is not None else 0.05,
             "state_reference_event_id": row.state_reference_event_id,
             "has_reference": row.state_reference_crop is not None,
+            "has_model": row.state_model_data is not None,
             "created_at": _utc_or_now(row.created_at).isoformat(),
             "updated_at": _utc_or_now(row.updated_at).isoformat(),
         }
@@ -364,6 +369,20 @@ class Database:
         with self.SessionLocal() as session:
             row = session.get(Barrier, barrier_id)
             return row.state_reference_crop if row else None
+
+    def set_barrier_model(self, barrier_id: int, model_bytes: bytes) -> None:
+        with self.SessionLocal() as session:
+            row = session.get(Barrier, barrier_id)
+            if row is None:
+                return
+            row.state_model_data = model_bytes
+            row.updated_at = utc_now()
+            session.commit()
+
+    def get_barrier_model(self, barrier_id: int) -> bytes | None:
+        with self.SessionLocal() as session:
+            row = session.get(Barrier, barrier_id)
+            return row.state_model_data if row else None
 
     def apply_calibration_threshold(self, barrier_id: int, threshold: float) -> dict[str, object] | None:
         with self.SessionLocal() as session:

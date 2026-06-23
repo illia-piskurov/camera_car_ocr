@@ -13,6 +13,7 @@ from pydantic import BaseModel, Field
 
 from .camera import SnapshotCameraClient
 from .calibration import (
+    BarrierModel,
     build_calibration_samples,
     bytes_to_crop,
     compute_accuracy,
@@ -20,6 +21,7 @@ from .calibration import (
     crop_to_bytes,
     find_snapshot_for_frame,
     load_zone_crop,
+    train_barrier_model,
 )
 from .config import Settings
 from .db import Database, utc_now
@@ -238,7 +240,7 @@ def delete_barrier_check_zone(barrier_id: int) -> dict[str, object]:
 
 
 @app.get("/api/barriers/{barrier_id}/calibration")
-def get_barrier_calibration(barrier_id: int, limit: int = Query(default=60, le=200)) -> dict[str, object]:
+def get_barrier_calibration(barrier_id: int, limit: int = Query(default=100, le=500)) -> dict[str, object]:
     barrier = db.get_barrier(barrier_id)
     if barrier is None:
         raise HTTPException(status_code=404, detail=f"Barrier {barrier_id} not found")
@@ -249,6 +251,7 @@ def get_barrier_calibration(barrier_id: int, limit: int = Query(default=60, le=2
             "barrier_id": barrier_id,
             "reference_event_id": barrier.get("state_reference_event_id"),
             "has_reference": barrier.get("has_reference", False),
+            "has_model": barrier.get("has_model", False),
             "threshold": barrier.get("state_threshold", 0.05),
             "samples": [],
             "error": "No check zone configured for this barrier",
@@ -261,6 +264,9 @@ def get_barrier_calibration(barrier_id: int, limit: int = Query(default=60, le=2
     ref_bytes = db.get_barrier_reference_crop(barrier_id)
     reference_crop = bytes_to_crop(ref_bytes) if ref_bytes else None
 
+    model_bytes = db.get_barrier_model(barrier_id)
+    model: BarrierModel | None = BarrierModel.from_bytes(model_bytes) if model_bytes else None
+
     samples = build_calibration_samples(
         events=events,
         check_zone=check_zone,
@@ -268,12 +274,14 @@ def get_barrier_calibration(barrier_id: int, limit: int = Query(default=60, le=2
         threshold=float(barrier.get("state_threshold") or 0.05),
         existing_labels=existing_labels,
         snapshot_dir=cfg.recognition_snapshot_dir,
+        model=model,
     )
 
     return {
         "barrier_id": barrier_id,
         "reference_event_id": barrier.get("state_reference_event_id"),
         "has_reference": barrier.get("has_reference", False),
+        "has_model": barrier.get("has_model", False),
         "threshold": barrier.get("state_threshold", 0.05),
         "samples": samples,
     }
@@ -324,8 +332,10 @@ def apply_barrier_calibration(barrier_id: int) -> dict[str, object]:
         raise HTTPException(status_code=404, detail=f"Barrier {barrier_id} not found")
 
     check_zone = db.get_barrier_check_zone(barrier_id)
-    existing_labels = db.get_calibration_labels(barrier_id)
+    if check_zone is None:
+        raise HTTPException(status_code=400, detail="No check zone configured")
 
+    existing_labels = db.get_calibration_labels(barrier_id)
     if not existing_labels:
         raise HTTPException(status_code=400, detail="No labeled samples. Label some event photos first.")
 
@@ -334,11 +344,10 @@ def apply_barrier_calibration(barrier_id: int) -> dict[str, object]:
     if reference_crop is None:
         raise HTTPException(status_code=400, detail="No reference image. Set a closed-state reference first.")
 
-    if check_zone is None:
-        raise HTTPException(status_code=400, detail="No check zone configured")
-
+    # Load ALL labeled events (not just recent) for training
     camera_id = check_zone.get("camera_id")
-    events = db.get_recent_events(limit=200, camera_id=camera_id)
+    events = db.get_recent_events(limit=500, camera_id=camera_id)
+
     samples = build_calibration_samples(
         events=events,
         check_zone=check_zone,
@@ -346,27 +355,55 @@ def apply_barrier_calibration(barrier_id: int) -> dict[str, object]:
         threshold=float(barrier.get("state_threshold") or 0.05),
         existing_labels=existing_labels,
         snapshot_dir=cfg.recognition_snapshot_dir,
+        max_samples=500,
     )
-
-    threshold = compute_optimal_threshold(samples)
-    if threshold is None:
-        raise HTTPException(
-            status_code=400,
-            detail="Need at least 1 labeled 'open' and 1 labeled 'closed' sample to compute threshold.",
-        )
-
-    accuracy = compute_accuracy(samples, threshold)
-    db.apply_calibration_threshold(barrier_id, threshold)
 
     n_open = sum(1 for s in samples if s.get("user_label") == "open")
     n_closed = sum(1 for s in samples if s.get("user_label") == "closed")
 
+    if n_open == 0 or n_closed == 0:
+        raise HTTPException(
+            status_code=400,
+            detail="Need at least 1 labeled 'open' and 1 labeled 'closed' photo with a snapshot to train.",
+        )
+
+    # --- Train logistic regression model ---
+    # Collect (crop, label) pairs for samples that have snapshots
+    labeled_crops: list[tuple] = []
+    for s in samples:
+        if s.get("user_label") and s.get("crop_b64"):
+            import base64, numpy as _np
+            crop_bytes = base64.b64decode(s["crop_b64"])
+            arr = _np.frombuffer(crop_bytes, dtype=_np.uint8)
+            import cv2 as _cv2
+            crop = _cv2.imdecode(arr, _cv2.IMREAD_COLOR)
+            if crop is not None:
+                labeled_crops.append((crop, s["user_label"]))
+
+    model_accuracy: float | None = None
+    if len(labeled_crops) >= 2:
+        result = train_barrier_model(labeled_crops)
+        if result is not None:
+            model, model_accuracy = result
+            db.set_barrier_model(barrier_id, model.to_bytes())
+
+    # --- Also compute diff-based threshold (fallback) ---
+    threshold = compute_optimal_threshold(samples)
+    if threshold is not None:
+        db.apply_calibration_threshold(barrier_id, threshold)
+    else:
+        threshold = float(barrier.get("state_threshold") or 0.05)
+
+    diff_accuracy = compute_accuracy(samples, threshold)
+
     return {
         "status": "ok",
         "threshold": threshold,
-        "accuracy": accuracy,
+        "diff_accuracy": diff_accuracy,
+        "model_accuracy": model_accuracy,
         "n_open": n_open,
         "n_closed": n_closed,
+        "n_total_labeled": len(labeled_crops),
     }
 
 

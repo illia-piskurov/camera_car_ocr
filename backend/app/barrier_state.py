@@ -14,12 +14,16 @@ from __future__ import annotations
 
 import logging
 import time
+from typing import TYPE_CHECKING
 
 import cv2
 import numpy as np
 
 from .motion_detector import compute_frame_diff
 from .zones import crop_zone
+
+if TYPE_CHECKING:
+    from .calibration import BarrierModel
 
 LOG = logging.getLogger(__name__)
 
@@ -59,6 +63,7 @@ class BarrierStateDetector:
         self._reference: np.ndarray | None = None
         self._reference_mode: str = _MODE_OPEN_REF
         self._reference_event_id: int | None = None
+        self._model: BarrierModel | None = None
         self._state: str = UNKNOWN
         self._pending_reference_at: float | None = None  # monotonic deadline
 
@@ -73,6 +78,12 @@ class BarrierStateDetector:
     @property
     def reference_event_id(self) -> int | None:
         return self._reference_event_id
+
+    def set_model(self, model: BarrierModel) -> None:
+        """Install a trained logistic regression model. Takes priority over diff threshold."""
+        self._model = model
+        self._state = UNKNOWN
+        LOG.info("Barrier state: ML model installed (threshold=%.2f)", model.decision_threshold)
 
     def set_closed_reference(
         self,
@@ -150,6 +161,17 @@ class BarrierStateDetector:
                 zone_frame.shape[0],
             )
 
+        # ML model takes priority when available
+        if self._model is not None:
+            self._state = self._model.predict(zone_frame)
+            LOG.debug(
+                "Barrier state (model): prob=%.3f threshold=%.2f state=%s",
+                self._model.predict_proba(zone_frame),
+                self._model.decision_threshold,
+                self._state,
+            )
+            return self._state
+
         if self._reference is None:
             return UNKNOWN
 
@@ -183,7 +205,7 @@ class BarrierStateDetector:
                     )
 
         LOG.debug(
-            "Barrier state: diff=%.3f threshold=%.3f state=%s mode=%s",
+            "Barrier state (diff): diff=%.3f threshold=%.3f state=%s mode=%s",
             diff,
             self._threshold,
             self._state,
