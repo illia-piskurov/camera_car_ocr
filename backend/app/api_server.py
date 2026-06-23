@@ -12,6 +12,15 @@ from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel, Field
 
 from .camera import SnapshotCameraClient
+from .calibration import (
+    build_calibration_samples,
+    bytes_to_crop,
+    compute_accuracy,
+    compute_optimal_threshold,
+    crop_to_bytes,
+    find_snapshot_for_frame,
+    load_zone_crop,
+)
 from .config import Settings
 from .db import Database, utc_now
 from .logging_utils import configure_logging
@@ -62,6 +71,17 @@ class BarrierUpdateInput(BaseModel):
     name: str | None = Field(default=None, max_length=128)
     ha_open_entity_id: str | None = Field(default=None, max_length=128)
     ha_close_entity_id: str | None = Field(default=None, max_length=128)
+    state_check_enabled: bool | None = None
+    state_threshold: float | None = Field(default=None, ge=0.001, le=1.0)
+
+
+class CalibrationReferenceInput(BaseModel):
+    event_id: int
+
+
+class CalibrationLabelInput(BaseModel):
+    event_id: int
+    label: str | None = Field(default=None, pattern="^(open|closed)$")
 
 
 class BarrierCheckZoneInput(BaseModel):
@@ -166,6 +186,8 @@ def update_barrier(barrier_id: int, payload: BarrierUpdateInput) -> dict[str, ob
         name=payload.name,
         ha_open_entity_id=payload.ha_open_entity_id,
         ha_close_entity_id=payload.ha_close_entity_id,
+        state_check_enabled=payload.state_check_enabled,
+        state_threshold=payload.state_threshold,
     )
     if barrier is None:
         raise HTTPException(status_code=404, detail=f"Barrier {barrier_id} not found")
@@ -212,6 +234,147 @@ def delete_barrier_check_zone(barrier_id: int) -> dict[str, object]:
     if db.get_barrier(barrier_id) is None:
         raise HTTPException(status_code=404, detail=f"Barrier {barrier_id} not found")
     db.replace_barrier_check_zone(None, barrier_id=barrier_id)
+    return {"status": "ok"}
+
+
+@app.get("/api/barriers/{barrier_id}/calibration")
+def get_barrier_calibration(barrier_id: int, limit: int = Query(default=60, le=200)) -> dict[str, object]:
+    barrier = db.get_barrier(barrier_id)
+    if barrier is None:
+        raise HTTPException(status_code=404, detail=f"Barrier {barrier_id} not found")
+
+    check_zone = db.get_barrier_check_zone(barrier_id)
+    if check_zone is None:
+        return {
+            "barrier_id": barrier_id,
+            "reference_event_id": barrier.get("state_reference_event_id"),
+            "has_reference": barrier.get("has_reference", False),
+            "threshold": barrier.get("state_threshold", 0.05),
+            "samples": [],
+            "error": "No check zone configured for this barrier",
+        }
+
+    camera_id = check_zone.get("camera_id")
+    events = db.get_recent_events(limit=limit, camera_id=camera_id)
+    existing_labels = db.get_calibration_labels(barrier_id)
+
+    ref_bytes = db.get_barrier_reference_crop(barrier_id)
+    reference_crop = bytes_to_crop(ref_bytes) if ref_bytes else None
+
+    samples = build_calibration_samples(
+        events=events,
+        check_zone=check_zone,
+        reference_crop=reference_crop,
+        threshold=float(barrier.get("state_threshold") or 0.05),
+        existing_labels=existing_labels,
+        snapshot_dir=cfg.recognition_snapshot_dir,
+    )
+
+    return {
+        "barrier_id": barrier_id,
+        "reference_event_id": barrier.get("state_reference_event_id"),
+        "has_reference": barrier.get("has_reference", False),
+        "threshold": barrier.get("state_threshold", 0.05),
+        "samples": samples,
+    }
+
+
+@app.post("/api/barriers/{barrier_id}/calibration/reference")
+def set_calibration_reference(barrier_id: int, payload: CalibrationReferenceInput) -> dict[str, object]:
+    barrier = db.get_barrier(barrier_id)
+    if barrier is None:
+        raise HTTPException(status_code=404, detail=f"Barrier {barrier_id} not found")
+
+    check_zone = db.get_barrier_check_zone(barrier_id)
+    if check_zone is None:
+        raise HTTPException(status_code=400, detail="No check zone configured for this barrier")
+
+    frame_id = db.get_event_frame_id(payload.event_id)
+    if frame_id is None:
+        raise HTTPException(status_code=404, detail=f"Event {payload.event_id} not found")
+
+    image_path = find_snapshot_for_frame(frame_id, cfg.recognition_snapshot_dir)
+    if image_path is None:
+        raise HTTPException(status_code=404, detail="Snapshot image not found for this event")
+
+    crop = load_zone_crop(image_path, check_zone)
+    if crop is None:
+        raise HTTPException(status_code=422, detail="Could not crop zone from event image")
+
+    crop_bytes = crop_to_bytes(crop)
+    if crop_bytes is None:
+        raise HTTPException(status_code=500, detail="Failed to encode crop")
+
+    barrier_row = db.set_barrier_calibration_reference(barrier_id, payload.event_id, crop_bytes)
+    return {"status": "ok", "barrier": barrier_row}
+
+
+@app.post("/api/barriers/{barrier_id}/calibration/label")
+def set_calibration_label(barrier_id: int, payload: CalibrationLabelInput) -> dict[str, object]:
+    if db.get_barrier(barrier_id) is None:
+        raise HTTPException(status_code=404, detail=f"Barrier {barrier_id} not found")
+    db.upsert_calibration_label(barrier_id, payload.event_id, payload.label)
+    return {"status": "ok"}
+
+
+@app.post("/api/barriers/{barrier_id}/calibration/apply")
+def apply_barrier_calibration(barrier_id: int) -> dict[str, object]:
+    barrier = db.get_barrier(barrier_id)
+    if barrier is None:
+        raise HTTPException(status_code=404, detail=f"Barrier {barrier_id} not found")
+
+    check_zone = db.get_barrier_check_zone(barrier_id)
+    existing_labels = db.get_calibration_labels(barrier_id)
+
+    if not existing_labels:
+        raise HTTPException(status_code=400, detail="No labeled samples. Label some event photos first.")
+
+    ref_bytes = db.get_barrier_reference_crop(barrier_id)
+    reference_crop = bytes_to_crop(ref_bytes) if ref_bytes else None
+    if reference_crop is None:
+        raise HTTPException(status_code=400, detail="No reference image. Set a closed-state reference first.")
+
+    if check_zone is None:
+        raise HTTPException(status_code=400, detail="No check zone configured")
+
+    camera_id = check_zone.get("camera_id")
+    events = db.get_recent_events(limit=200, camera_id=camera_id)
+    samples = build_calibration_samples(
+        events=events,
+        check_zone=check_zone,
+        reference_crop=reference_crop,
+        threshold=float(barrier.get("state_threshold") or 0.05),
+        existing_labels=existing_labels,
+        snapshot_dir=cfg.recognition_snapshot_dir,
+    )
+
+    threshold = compute_optimal_threshold(samples)
+    if threshold is None:
+        raise HTTPException(
+            status_code=400,
+            detail="Need at least 1 labeled 'open' and 1 labeled 'closed' sample to compute threshold.",
+        )
+
+    accuracy = compute_accuracy(samples, threshold)
+    db.apply_calibration_threshold(barrier_id, threshold)
+
+    n_open = sum(1 for s in samples if s.get("user_label") == "open")
+    n_closed = sum(1 for s in samples if s.get("user_label") == "closed")
+
+    return {
+        "status": "ok",
+        "threshold": threshold,
+        "accuracy": accuracy,
+        "n_open": n_open,
+        "n_closed": n_closed,
+    }
+
+
+@app.delete("/api/barriers/{barrier_id}/calibration")
+def clear_barrier_calibration(barrier_id: int) -> dict[str, object]:
+    if db.get_barrier(barrier_id) is None:
+        raise HTTPException(status_code=404, detail=f"Barrier {barrier_id} not found")
+    db.clear_calibration_labels(barrier_id)
     return {"status": "ok"}
 
 

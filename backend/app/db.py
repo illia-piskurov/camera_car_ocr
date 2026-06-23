@@ -3,7 +3,7 @@ from __future__ import annotations
 import os
 from datetime import datetime, timedelta, timezone
 
-from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Integer, String, create_engine, event, func, select, text
+from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Integer, LargeBinary, String, create_engine, event, func, select, text
 from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column, sessionmaker
 
 from .security import decrypt_text, encrypt_text
@@ -65,8 +65,23 @@ class Barrier(Base):
     name: Mapped[str] = mapped_column(String(128), default="")
     ha_open_entity_id: Mapped[str] = mapped_column(String(128), default="")
     ha_close_entity_id: Mapped[str] = mapped_column(String(128), default="")
+    # State detection
+    state_check_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
+    state_threshold: Mapped[float] = mapped_column(Float, default=0.05)
+    state_reference_event_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    state_reference_crop: Mapped[bytes | None] = mapped_column(LargeBinary, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+
+
+class BarrierCalibrationSample(Base):
+    __tablename__ = "barrier_calibration_samples"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    barrier_id: Mapped[int] = mapped_column(Integer, ForeignKey("barriers.id", ondelete="CASCADE"), index=True)
+    event_id: Mapped[int] = mapped_column(Integer, index=True)
+    user_label: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
 
 
 class Camera(Base):
@@ -173,6 +188,20 @@ class Database:
                 conn.execute(text("ALTER TABLE detection_zones ADD COLUMN barrier_id INTEGER REFERENCES barriers(id) ON DELETE SET NULL"))
                 conn.commit()
 
+            barrier_cols = {row[1] for row in conn.execute(text("PRAGMA table_info(barriers)"))}
+            if "state_check_enabled" not in barrier_cols:
+                conn.execute(text("ALTER TABLE barriers ADD COLUMN state_check_enabled INTEGER NOT NULL DEFAULT 0"))
+                conn.commit()
+            if "state_threshold" not in barrier_cols:
+                conn.execute(text("ALTER TABLE barriers ADD COLUMN state_threshold REAL NOT NULL DEFAULT 0.05"))
+                conn.commit()
+            if "state_reference_event_id" not in barrier_cols:
+                conn.execute(text("ALTER TABLE barriers ADD COLUMN state_reference_event_id INTEGER"))
+                conn.commit()
+            if "state_reference_crop" not in barrier_cols:
+                conn.execute(text("ALTER TABLE barriers ADD COLUMN state_reference_crop BLOB"))
+                conn.commit()
+
         # Auto-migrate: create Barrier records from existing zone entity IDs
         self._auto_migrate_entities_to_barriers()
 
@@ -247,6 +276,10 @@ class Database:
             "name": row.name,
             "ha_open_entity_id": row.ha_open_entity_id,
             "ha_close_entity_id": row.ha_close_entity_id,
+            "state_check_enabled": bool(row.state_check_enabled),
+            "state_threshold": float(row.state_threshold) if row.state_threshold is not None else 0.05,
+            "state_reference_event_id": row.state_reference_event_id,
+            "has_reference": row.state_reference_crop is not None,
             "created_at": _utc_or_now(row.created_at).isoformat(),
             "updated_at": _utc_or_now(row.updated_at).isoformat(),
         }
@@ -288,6 +321,8 @@ class Database:
         name: str | None = None,
         ha_open_entity_id: str | None = None,
         ha_close_entity_id: str | None = None,
+        state_check_enabled: bool | None = None,
+        state_threshold: float | None = None,
     ) -> dict[str, object] | None:
         with self.SessionLocal() as session:
             row = session.get(Barrier, barrier_id)
@@ -299,10 +334,85 @@ class Database:
                 row.ha_open_entity_id = ha_open_entity_id.strip()
             if ha_close_entity_id is not None:
                 row.ha_close_entity_id = ha_close_entity_id.strip()
+            if state_check_enabled is not None:
+                row.state_check_enabled = state_check_enabled
+            if state_threshold is not None:
+                row.state_threshold = max(0.001, min(1.0, state_threshold))
             row.updated_at = utc_now()
             session.commit()
             session.refresh(row)
             return self._barrier_row(row)
+
+    def set_barrier_calibration_reference(
+        self,
+        barrier_id: int,
+        event_id: int,
+        crop_bytes: bytes,
+    ) -> dict[str, object] | None:
+        with self.SessionLocal() as session:
+            row = session.get(Barrier, barrier_id)
+            if row is None:
+                return None
+            row.state_reference_event_id = event_id
+            row.state_reference_crop = crop_bytes
+            row.updated_at = utc_now()
+            session.commit()
+            session.refresh(row)
+            return self._barrier_row(row)
+
+    def get_barrier_reference_crop(self, barrier_id: int) -> bytes | None:
+        with self.SessionLocal() as session:
+            row = session.get(Barrier, barrier_id)
+            return row.state_reference_crop if row else None
+
+    def apply_calibration_threshold(self, barrier_id: int, threshold: float) -> dict[str, object] | None:
+        with self.SessionLocal() as session:
+            row = session.get(Barrier, barrier_id)
+            if row is None:
+                return None
+            row.state_threshold = max(0.001, min(1.0, threshold))
+            row.updated_at = utc_now()
+            session.commit()
+            session.refresh(row)
+            return self._barrier_row(row)
+
+    # ----------------------------------------------------------------- calibration samples
+
+    def upsert_calibration_label(self, barrier_id: int, event_id: int, label: str | None) -> None:
+        with self.SessionLocal() as session:
+            row = session.execute(
+                select(BarrierCalibrationSample).where(
+                    BarrierCalibrationSample.barrier_id == barrier_id,
+                    BarrierCalibrationSample.event_id == event_id,
+                )
+            ).scalar_one_or_none()
+            if label is None:
+                if row is not None:
+                    session.delete(row)
+            else:
+                if row is None:
+                    row = BarrierCalibrationSample(barrier_id=barrier_id, event_id=event_id)
+                    session.add(row)
+                row.user_label = label
+            session.commit()
+
+    def get_calibration_labels(self, barrier_id: int) -> dict[int, str]:
+        with self.SessionLocal() as session:
+            rows = session.execute(
+                select(BarrierCalibrationSample).where(
+                    BarrierCalibrationSample.barrier_id == barrier_id,
+                    BarrierCalibrationSample.user_label.isnot(None),
+                )
+            ).scalars().all()
+            return {r.event_id: r.user_label for r in rows}  # type: ignore[return-value]
+
+    def clear_calibration_labels(self, barrier_id: int) -> None:
+        with self.SessionLocal() as session:
+            session.execute(
+                text("DELETE FROM barrier_calibration_samples WHERE barrier_id = :bid"),
+                {"bid": barrier_id},
+            )
+            session.commit()
 
     def delete_barrier(self, barrier_id: int) -> bool:
         with self.SessionLocal() as session:

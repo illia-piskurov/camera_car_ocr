@@ -46,8 +46,31 @@ export type Barrier = {
     name: string
     ha_open_entity_id: string
     ha_close_entity_id: string
+    state_check_enabled: boolean
+    state_threshold: number
+    state_reference_event_id: number | null
+    has_reference: boolean
     created_at: string
     updated_at: string
+}
+
+export type CalibrationSample = {
+    event_id: number
+    occurred_at: string | null
+    image_url: string
+    crop_b64: string | null
+    diff_score: number | null
+    predicted_label: "open" | "closed" | null
+    user_label: "open" | "closed" | null
+}
+
+export type CalibrationData = {
+    barrier_id: number
+    reference_event_id: number | null
+    has_reference: boolean
+    threshold: number
+    samples: CalibrationSample[]
+    error?: string
 }
 
 export type DetectionZone = {

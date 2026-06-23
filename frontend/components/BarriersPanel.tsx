@@ -1,8 +1,9 @@
 "use client"
 
 import { useEffect, useState } from "react"
-import { Plus, Trash2, X, Check, PencilLine } from "lucide-react"
+import { Plus, Trash2, X, Check, PencilLine, FlaskConical } from "lucide-react"
 import { Button } from "@/components/ui/button"
+import { BarrierCalibrationPanel } from "@/components/BarrierCalibrationPanel"
 import { listBarriers, createBarrier, updateBarrier, deleteBarrier } from "@/lib/api"
 import type { Barrier } from "@/lib/types"
 
@@ -20,6 +21,8 @@ export function BarriersPanel({ onClose, onBarriersChanged }: BarriersPanelProps
     const [editName, setEditName] = useState("")
     const [editOpen, setEditOpen] = useState("")
     const [editClose, setEditClose] = useState("")
+    const [editStateEnabled, setEditStateEnabled] = useState(false)
+    const [editThreshold, setEditThreshold] = useState("5")
     const [editBusy, setEditBusy] = useState(false)
 
     const [creatingNew, setCreatingNew] = useState(false)
@@ -30,6 +33,7 @@ export function BarriersPanel({ onClose, onBarriersChanged }: BarriersPanelProps
 
     const [deletingId, setDeletingId] = useState<number | null>(null)
     const [deleteBusy, setDeleteBusy] = useState(false)
+    const [calibratingBarrier, setCalibratingBarrier] = useState<Barrier | null>(null)
 
     useEffect(() => {
         let alive = true
@@ -54,16 +58,21 @@ export function BarriersPanel({ onClose, onBarriersChanged }: BarriersPanelProps
         setEditName(barrier.name)
         setEditOpen(barrier.ha_open_entity_id)
         setEditClose(barrier.ha_close_entity_id)
+        setEditStateEnabled(barrier.state_check_enabled)
+        setEditThreshold(String(Math.round(barrier.state_threshold * 100)))
     }
 
     async function saveEdit() {
         if (editingId === null) return
         setEditBusy(true)
         try {
+            const thresholdPct = parseFloat(editThreshold)
             const updated = await updateBarrier(editingId, {
                 name: editName,
                 ha_open_entity_id: editOpen,
                 ha_close_entity_id: editClose,
+                state_check_enabled: editStateEnabled,
+                state_threshold: isNaN(thresholdPct) ? 0.05 : Math.max(0.1, Math.min(100, thresholdPct)) / 100,
             })
             setBarriers((prev) => prev.map((b) => (b.id === editingId ? updated : b)))
             setEditingId(null)
@@ -111,6 +120,7 @@ export function BarriersPanel({ onClose, onBarriersChanged }: BarriersPanelProps
     }
 
     return (
+        <>
         <div className="fixed inset-0 z-50 flex items-start justify-end bg-black/50 p-4">
             <div className="flex h-full w-full max-w-md flex-col rounded-xl border border-slate-700/90 bg-slate-900 shadow-2xl">
                 {/* Header */}
@@ -164,6 +174,35 @@ export function BarriersPanel({ onClose, onBarriersChanged }: BarriersPanelProps
                                             placeholder="input_button.gate_close"
                                         />
                                     </label>
+                                    <div className="space-y-1.5 rounded border border-slate-700/60 bg-slate-900/50 px-2 py-2">
+                                        <p className="text-[11px] font-medium uppercase tracking-wider text-slate-400">State Detection</p>
+                                        <label className="flex cursor-pointer items-center gap-2 text-[11px] text-slate-300">
+                                            <input
+                                                type="checkbox"
+                                                checked={editStateEnabled}
+                                                onChange={(e) => setEditStateEnabled(e.target.checked)}
+                                                className="accent-amber-500"
+                                            />
+                                            Check state before opening (skip if already open)
+                                        </label>
+                                        {editStateEnabled && (
+                                            <label className="space-y-1 text-[11px] text-slate-400">
+                                                <span>Sensitivity threshold (%)</span>
+                                                <div className="flex items-center gap-2">
+                                                    <input
+                                                        type="number"
+                                                        min={0.1}
+                                                        max={100}
+                                                        step={0.5}
+                                                        value={editThreshold}
+                                                        onChange={(e) => setEditThreshold(e.target.value)}
+                                                        className="w-24 rounded border border-slate-600 bg-slate-900 px-2 py-1 text-xs text-slate-100 outline-none focus:border-amber-400"
+                                                    />
+                                                    <span className="text-slate-500 text-[10px]">% pixels changed → OPEN</span>
+                                                </div>
+                                            </label>
+                                        )}
+                                    </div>
                                     <div className="flex gap-2 pt-1">
                                         <Button
                                             size="sm"
@@ -186,27 +225,44 @@ export function BarriersPanel({ onClose, onBarriersChanged }: BarriersPanelProps
                                     </div>
                                 </div>
                             ) : (
-                                <div className="flex items-start justify-between gap-2">
-                                    <div className="min-w-0">
-                                        <p className="text-sm font-medium text-slate-100 truncate">
-                                            {barrier.name || <span className="text-slate-500 italic">Unnamed</span>}
-                                        </p>
-                                        <p className="text-[11px] text-slate-400 truncate mt-0.5">
-                                            Open: {barrier.ha_open_entity_id || <span className="text-slate-600">—</span>}
-                                        </p>
-                                        <p className="text-[11px] text-slate-400 truncate">
-                                            Close: {barrier.ha_close_entity_id || <span className="text-slate-600">—</span>}
-                                        </p>
-                                    </div>
-                                    <div className="flex shrink-0 gap-1">
-                                        <button
-                                            type="button"
-                                            onClick={() => startEdit(barrier)}
-                                            className="rounded p-1.5 text-slate-400 hover:bg-slate-700/60 hover:text-slate-100"
-                                            title="Edit"
-                                        >
-                                            <PencilLine size={14} />
-                                        </button>
+                                <div className="space-y-1.5">
+                                    <div className="flex items-start justify-between gap-2">
+                                        <div className="min-w-0">
+                                            <p className="text-sm font-medium text-slate-100 truncate">
+                                                {barrier.name || <span className="text-slate-500 italic">Unnamed</span>}
+                                            </p>
+                                            <p className="text-[11px] text-slate-400 truncate mt-0.5">
+                                                Open: {barrier.ha_open_entity_id || <span className="text-slate-600">—</span>}
+                                            </p>
+                                            <p className="text-[11px] text-slate-400 truncate">
+                                                Close: {barrier.ha_close_entity_id || <span className="text-slate-600">—</span>}
+                                            </p>
+                                            {barrier.state_check_enabled && (
+                                                <p className="text-[10px] mt-1">
+                                                    <span className="rounded bg-amber-500/20 px-1.5 py-0.5 text-amber-300">
+                                                        State check ON · {(barrier.state_threshold * 100).toFixed(1)}%
+                                                        {barrier.has_reference ? " · calibrated" : " · no reference"}
+                                                    </span>
+                                                </p>
+                                            )}
+                                        </div>
+                                        <div className="flex shrink-0 gap-1">
+                                            <button
+                                                type="button"
+                                                onClick={() => setCalibratingBarrier(barrier)}
+                                                className="rounded p-1.5 text-slate-400 hover:bg-amber-500/20 hover:text-amber-300"
+                                                title="Calibrate"
+                                            >
+                                                <FlaskConical size={14} />
+                                            </button>
+                                            <button
+                                                type="button"
+                                                onClick={() => startEdit(barrier)}
+                                                className="rounded p-1.5 text-slate-400 hover:bg-slate-700/60 hover:text-slate-100"
+                                                title="Edit"
+                                            >
+                                                <PencilLine size={14} />
+                                            </button>
                                         {deletingId === barrier.id ? (
                                             <div className="flex gap-1">
                                                 <button
@@ -235,6 +291,7 @@ export function BarriersPanel({ onClose, onBarriersChanged }: BarriersPanelProps
                                                 <Trash2 size={14} />
                                             </button>
                                         )}
+                                        </div>
                                     </div>
                                 </div>
                             )}
@@ -318,5 +375,18 @@ export function BarriersPanel({ onClose, onBarriersChanged }: BarriersPanelProps
                 </div>
             </div>
         </div>
+
+        {calibratingBarrier && (
+            <BarrierCalibrationPanel
+                barrier={calibratingBarrier}
+                onClose={() => setCalibratingBarrier(null)}
+                onBarrierUpdated={(updated) => {
+                    setBarriers((prev) => prev.map((b) => (b.id === updated.id ? updated : b)))
+                    setCalibratingBarrier(updated)
+                    onBarriersChanged?.()
+                }}
+            />
+        )}
+    </>
     )
 }

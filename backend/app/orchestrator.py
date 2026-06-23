@@ -14,6 +14,7 @@ import numpy as np
 from .alpr_service import AlprService
 from .barrier import BarrierController
 from .barrier_state import BarrierStateDetector
+from .calibration import bytes_to_crop
 from .camera import SnapshotCameraClient
 from .config import Settings
 from .db import Database
@@ -539,25 +540,57 @@ def _poll_single_camera(
 
     # Barrier state detection per barrier — must run before handle_detections
     barrier_states: dict[int, str] = {}  # barrier_id → state string
-    if cfg.barrier_state_enabled:
-        barrier_check_zones = db.get_barrier_check_zones_for_camera(camera_id)
-        active_barrier_ids: set[int] = set()
-        for bcz in barrier_check_zones:
-            bid = bcz.get("barrier_id")
-            if bid is None:
-                continue
-            bid = int(bid)
-            active_barrier_ids.add(bid)
-            if bid not in state.barrier_detectors:
-                state.barrier_detectors[bid] = BarrierStateDetector(
-                    threshold=cfg.barrier_state_threshold,
-                    reference_delay_sec=cfg.barrier_state_reference_delay_sec,
-                )
-            barrier_states[bid] = state.barrier_detectors[bid].update(frame, bcz, now_monotonic)
-            LOG.debug("Barrier state camera=%s barrier=%s state=%s", camera_id, bid, barrier_states[bid])
-        for bid in list(state.barrier_detectors):
-            if bid not in active_barrier_ids:
-                del state.barrier_detectors[bid]
+    _barriers_for_state = {int(b["id"]): b for b in db.list_barriers()}
+    barrier_check_zones = db.get_barrier_check_zones_for_camera(camera_id)
+    active_barrier_ids: set[int] = set()
+    for bcz in barrier_check_zones:
+        bid = bcz.get("barrier_id")
+        if bid is None:
+            continue
+        bid = int(bid)
+        active_barrier_ids.add(bid)
+
+        barrier_cfg = _barriers_for_state.get(bid)
+        if barrier_cfg is None or not barrier_cfg.get("state_check_enabled"):
+            continue
+
+        per_threshold = float(barrier_cfg.get("state_threshold") or cfg.barrier_state_threshold)
+        ref_event_id = barrier_cfg.get("state_reference_event_id")
+
+        if bid not in state.barrier_detectors:
+            detector = BarrierStateDetector(
+                threshold=per_threshold,
+                reference_delay_sec=cfg.barrier_state_reference_delay_sec,
+            )
+            # Load calibrated closed-state reference if set
+            if ref_event_id is not None:
+                ref_bytes = db.get_barrier_reference_crop(bid)
+                if ref_bytes:
+                    ref_crop = bytes_to_crop(ref_bytes)
+                    if ref_crop is not None:
+                        detector.set_closed_reference(ref_crop, threshold=per_threshold, event_id=int(ref_event_id))
+            state.barrier_detectors[bid] = detector
+        else:
+            detector = state.barrier_detectors[bid]
+            # Reload reference if it changed (e.g., user recalibrated)
+            if ref_event_id != detector.reference_event_id:
+                if ref_event_id is not None:
+                    ref_bytes = db.get_barrier_reference_crop(bid)
+                    if ref_bytes:
+                        ref_crop = bytes_to_crop(ref_bytes)
+                        if ref_crop is not None:
+                            detector.set_closed_reference(ref_crop, threshold=per_threshold, event_id=int(ref_event_id))
+                else:
+                    # Reference cleared — fall back to open-ref mode (will reset to UNKNOWN until open command)
+                    detector._reference = None  # noqa: SLF001
+                    detector._reference_event_id = None  # noqa: SLF001
+
+        barrier_states[bid] = state.barrier_detectors[bid].update(frame, bcz, now_monotonic)
+        LOG.debug("Barrier state camera=%s barrier=%s state=%s", camera_id, bid, barrier_states[bid])
+
+    for bid in list(state.barrier_detectors):
+        if bid not in active_barrier_ids:
+            del state.barrier_detectors[bid]
 
     # Detect plates in zones using single-shot detection
     detections: list[PlateDetection] = []
@@ -601,10 +634,8 @@ def _poll_single_camera(
         barrier_states=barrier_states,
     )
 
-    # Notify relevant barrier detector after a successful open
-    if cfg.barrier_state_enabled and detection_result.frame_last_decision == "open":
-        opened_zone_id = detection_result.frame_last_zone  # zone_name, not id — use detection
-        # Look up barrier_id for the opened zone via zone_barrier_ids
+    # Notify relevant barrier detector after a successful open (for open-ref mode detectors)
+    if detection_result.frame_last_decision == "open":
         for zid, bid in zone_barrier_ids.items():
             if bid is not None and bid in state.barrier_detectors:
                 if any(d.zone_id == zid for d in detections if d.normalized_text == detection_result.frame_last_plate):

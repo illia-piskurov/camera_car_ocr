@@ -27,6 +27,9 @@ OPEN = "open"
 CLOSED = "closed"
 UNKNOWN = "unknown"
 
+_MODE_OPEN_REF = "open_ref"    # reference = open state; diff > threshold → CLOSED (default)
+_MODE_CLOSED_REF = "closed_ref"  # reference = closed state; diff > threshold → OPEN
+
 
 class BarrierStateDetector:
     """Detects barrier open/closed state from camera frames.
@@ -54,6 +57,8 @@ class BarrierStateDetector:
         self._adapt_alpha = adapt_alpha
 
         self._reference: np.ndarray | None = None
+        self._reference_mode: str = _MODE_OPEN_REF
+        self._reference_event_id: int | None = None
         self._state: str = UNKNOWN
         self._pending_reference_at: float | None = None  # monotonic deadline
 
@@ -64,6 +69,34 @@ class BarrierStateDetector:
     @property
     def has_reference(self) -> bool:
         return self._reference is not None
+
+    @property
+    def reference_event_id(self) -> int | None:
+        return self._reference_event_id
+
+    def set_closed_reference(
+        self,
+        crop: np.ndarray,
+        threshold: float | None = None,
+        event_id: int | None = None,
+    ) -> None:
+        """Set a calibrated closed-state reference crop.
+
+        When using this mode: diff > threshold means barrier changed from closed → OPEN.
+        """
+        self._reference = crop.copy()
+        self._reference_mode = _MODE_CLOSED_REF
+        self._reference_event_id = event_id
+        if threshold is not None:
+            self._threshold = threshold
+        self._pending_reference_at = None
+        self._state = UNKNOWN
+        LOG.info(
+            "Barrier state: closed-reference set (%dx%d) event_id=%s",
+            crop.shape[1],
+            crop.shape[0],
+            event_id,
+        )
 
     def notify_opened(self, now_monotonic: float | None = None) -> None:
         """Call immediately after a successful barrier open command.
@@ -130,19 +163,30 @@ class BarrierStateDetector:
 
         diff = compute_frame_diff(self._reference, zone_frame)
 
-        if diff > self._threshold:
-            self._state = CLOSED
+        if self._reference_mode == _MODE_CLOSED_REF:
+            # Calibrated mode: reference = closed position; large diff → arm moved → OPEN
+            self._state = OPEN if diff > self._threshold else CLOSED
         else:
-            self._state = OPEN
-            # Slowly blend reference toward current frame to track lighting drift
-            if self._adapt_alpha > 0:
-                self._reference = cv2.addWeighted(
-                    self._reference,
-                    1.0 - self._adapt_alpha,
-                    zone_frame,
-                    self._adapt_alpha,
-                    0,
-                )
+            # Default mode: reference = open position; large diff → arm present → CLOSED
+            if diff > self._threshold:
+                self._state = CLOSED
+            else:
+                self._state = OPEN
+                # Slowly blend reference toward current frame to track lighting drift
+                if self._adapt_alpha > 0:
+                    self._reference = cv2.addWeighted(
+                        self._reference,
+                        1.0 - self._adapt_alpha,
+                        zone_frame,
+                        self._adapt_alpha,
+                        0,
+                    )
 
-        LOG.debug("Barrier state: diff=%.3f threshold=%.3f state=%s", diff, self._threshold, self._state)
+        LOG.debug(
+            "Barrier state: diff=%.3f threshold=%.3f state=%s mode=%s",
+            diff,
+            self._threshold,
+            self._state,
+            self._reference_mode,
+        )
         return self._state
