@@ -63,9 +63,13 @@ def test_run_uses_single_frame_fetch_per_cycle(monkeypatch) -> None:
             ]
 
         @staticmethod
-        def get_barrier_check_zone(camera_id: int):
+        def list_barriers():
+            return []
+
+        @staticmethod
+        def get_barrier_check_zones_for_camera(camera_id: int):
             _ = camera_id
-            return None
+            return []
 
     class BarrierStub:
         @staticmethod

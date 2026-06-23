@@ -54,7 +54,7 @@ def sanitize_zone(raw: dict[str, object], default_name: str) -> dict[str, object
     if y_max - y_min < min_span:
         y_max = min(1.0, y_min + min_span)
 
-    return {
+    result: dict[str, object] = {
         "name": str(raw.get("name") or default_name),
         "ha_open_entity_id": str(raw.get("ha_open_entity_id") or raw.get("open_entity_id") or ""),
         "ha_close_entity_id": str(raw.get("ha_close_entity_id") or raw.get("close_entity_id") or ""),
@@ -65,6 +65,11 @@ def sanitize_zone(raw: dict[str, object], default_name: str) -> dict[str, object
         "is_enabled": bool(raw.get("is_enabled", True)),
         "sort_order": _as_int(raw.get("sort_order", 0), 0),
     }
+    if "barrier_id" in raw:
+        result["barrier_id"] = raw["barrier_id"]
+    if "camera_id" in raw:
+        result["camera_id"] = raw["camera_id"]
+    return result
 
 
 def zone_to_pixels(zone: dict[str, object], frame_width: int, frame_height: int) -> tuple[int, int, int, int]:

@@ -30,7 +30,7 @@ class PipelineState:
     last_preview_write_ts: float = 0.0
     last_no_zone_warning_ts: float = 0.0
     prev_frame: Any = None  # np.ndarray | None — kept for motion detection
-    barrier_detector: BarrierStateDetector | None = None
+    barrier_detectors: dict[int, BarrierStateDetector] = field(default_factory=dict)
     # Suppress repeated deny/observed events for same plate+zone
     _deny_ts: dict[tuple[str, int | None], float] = field(default_factory=dict)
     _observed_ts: dict[tuple[str, int | None], float] = field(default_factory=dict)
@@ -65,13 +65,15 @@ class PipelineState:
         self,
         barrier: BarrierController,
         open_only: bool = False,
-        barrier_state: str | None = None,
+        zone_barrier_ids: dict[int | None, int | None] | None = None,
+        barrier_states: dict[int, str] | None = None,
     ) -> None:
         """Close all currently open zones whose deadline has expired.
 
         open_only: skip close commands (for barriers with own auto-close timer).
-        barrier_state: current detected barrier state string from BarrierStateDetector.
-          If CLOSED — skip close command (already closed, would toggle open).
+        zone_barrier_ids: mapping of zone_id → barrier_id for per-barrier state lookup.
+        barrier_states: mapping of barrier_id → detected state string.
+          If state is CLOSED — skip close (already closed, toggle would open).
         """
         from .barrier_state import CLOSED as BS_CLOSED
 
@@ -92,11 +94,14 @@ class PipelineState:
                 state.clear()
                 continue
 
+            bid = zone_barrier_ids.get(zone_id) if zone_barrier_ids else None
+            barrier_state = barrier_states.get(bid) if (barrier_states and bid is not None) else None
             if barrier_state == BS_CLOSED:
                 LOG.info(
-                    "Barrier close skipped (camera: already closed) plate=%s zone=%s",
+                    "Barrier close skipped (camera: already closed) plate=%s zone=%s barrier=%s",
                     state.last_plate,
                     zone_id if zone_id is not None else "full",
+                    bid,
                 )
                 state.clear()
                 continue

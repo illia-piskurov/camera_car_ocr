@@ -41,6 +41,15 @@ export type CameraUpdatePayload = {
     group_id?: number | null
 }
 
+export type Barrier = {
+    id: number
+    name: string
+    ha_open_entity_id: string
+    ha_close_entity_id: string
+    created_at: string
+    updated_at: string
+}
+
 export type DetectionZone = {
     id: number
     name?: string
@@ -51,6 +60,7 @@ export type DetectionZone = {
     is_enabled: boolean
     sort_order: number
     camera_id?: number | null
+    barrier_id?: number | null
     ha_open_entity_id?: string
     ha_close_entity_id?: string
     cross_camera_enabled: boolean
@@ -60,6 +70,8 @@ export type DetectionZone = {
 
 export type BarrierZone = {
     id: number
+    barrier_id: number | null
+    camera_id?: number | null
     name?: string
     x_min: number
     y_min: number
@@ -143,7 +155,8 @@ export type PreviewData = {
     last_plate: string | null
     last_decision: string | null
     zones: DetectionZone[]
-    barrier_zone: BarrierZone | null
+    barriers: Barrier[]
+    barrier_zones: BarrierZone[]
     max_zones: number
     image_url: string | null
     version: string | null

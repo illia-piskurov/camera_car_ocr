@@ -58,6 +58,17 @@ class CameraGroup(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
 
 
+class Barrier(Base):
+    __tablename__ = "barriers"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    name: Mapped[str] = mapped_column(String(128), default="")
+    ha_open_entity_id: Mapped[str] = mapped_column(String(128), default="")
+    ha_close_entity_id: Mapped[str] = mapped_column(String(128), default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+
+
 class Camera(Base):
     __tablename__ = "cameras"
 
@@ -93,6 +104,7 @@ class DetectionZone(Base):
     # 'detection' (default) — OCR plate recognition zone
     # 'barrier_check' — small zone where barrier arm is visible when closed
     zone_type: Mapped[str] = mapped_column(String(32), default="detection")
+    barrier_id: Mapped[int | None] = mapped_column(Integer, ForeignKey("barriers.id", ondelete="SET NULL"), nullable=True)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
 
 
@@ -157,6 +169,54 @@ class Database:
             if "zone_type" not in zone_cols:
                 conn.execute(text("ALTER TABLE detection_zones ADD COLUMN zone_type VARCHAR(32) NOT NULL DEFAULT 'detection'"))
                 conn.commit()
+            if "barrier_id" not in zone_cols:
+                conn.execute(text("ALTER TABLE detection_zones ADD COLUMN barrier_id INTEGER REFERENCES barriers(id) ON DELETE SET NULL"))
+                conn.commit()
+
+        # Auto-migrate: create Barrier records from existing zone entity IDs
+        self._auto_migrate_entities_to_barriers()
+
+    def _auto_migrate_entities_to_barriers(self) -> None:
+        """For existing detection zones with entity IDs and no barrier_id, create Barrier records."""
+        with self.SessionLocal() as session:
+            rows = session.execute(text(
+                "SELECT id, ha_open_entity_id, ha_close_entity_id FROM detection_zones "
+                "WHERE zone_type = 'detection' AND barrier_id IS NULL "
+                "AND (ha_open_entity_id != '' OR ha_close_entity_id != '')"
+            )).fetchall()
+
+            if not rows:
+                return
+
+            entity_to_barrier: dict[tuple[str, str], int] = {}
+
+            for zone_id, open_eid, close_eid in rows:
+                key = (open_eid or "", close_eid or "")
+                if key not in entity_to_barrier:
+                    existing = session.execute(text(
+                        "SELECT id FROM barriers WHERE ha_open_entity_id = :o AND ha_close_entity_id = :c LIMIT 1"
+                    ), {"o": key[0], "c": key[1]}).fetchone()
+
+                    if existing:
+                        bid = existing[0]
+                    else:
+                        raw = key[0] or key[1]
+                        name = raw.split(".")[-1].replace("_open", "").replace("_", " ").strip().title() or "Barrier"
+                        session.execute(text(
+                            "INSERT INTO barriers (name, ha_open_entity_id, ha_close_entity_id, created_at, updated_at) "
+                            "VALUES (:n, :o, :c, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)"
+                        ), {"n": name, "o": key[0], "c": key[1]})
+                        session.commit()
+                        bid = session.execute(text("SELECT last_insert_rowid()")).scalar()
+
+                    entity_to_barrier[key] = int(bid)
+
+                session.execute(
+                    text("UPDATE detection_zones SET barrier_id = :bid WHERE id = :zid"),
+                    {"bid": entity_to_barrier[key], "zid": zone_id},
+                )
+
+            session.commit()
 
     def _camera_row(self, row: Camera) -> dict[str, object]:
         return {
@@ -180,6 +240,84 @@ class Database:
             "created_at": _utc_or_now(row.created_at).isoformat(),
             "updated_at": _utc_or_now(row.updated_at).isoformat(),
         }
+
+    def _barrier_row(self, row: Barrier) -> dict[str, object]:
+        return {
+            "id": row.id,
+            "name": row.name,
+            "ha_open_entity_id": row.ha_open_entity_id,
+            "ha_close_entity_id": row.ha_close_entity_id,
+            "created_at": _utc_or_now(row.created_at).isoformat(),
+            "updated_at": _utc_or_now(row.updated_at).isoformat(),
+        }
+
+    def list_barriers(self) -> list[dict[str, object]]:
+        with self.SessionLocal() as session:
+            rows = session.execute(select(Barrier).order_by(Barrier.id.asc())).scalars().all()
+            return [self._barrier_row(r) for r in rows]
+
+    def get_barrier(self, barrier_id: int) -> dict[str, object] | None:
+        with self.SessionLocal() as session:
+            row = session.get(Barrier, barrier_id)
+            return self._barrier_row(row) if row is not None else None
+
+    def create_barrier(
+        self,
+        *,
+        name: str,
+        ha_open_entity_id: str,
+        ha_close_entity_id: str,
+    ) -> dict[str, object]:
+        with self.SessionLocal() as session:
+            row = Barrier(
+                name=name.strip(),
+                ha_open_entity_id=ha_open_entity_id.strip(),
+                ha_close_entity_id=ha_close_entity_id.strip(),
+                created_at=utc_now(),
+                updated_at=utc_now(),
+            )
+            session.add(row)
+            session.commit()
+            session.refresh(row)
+            return self._barrier_row(row)
+
+    def update_barrier(
+        self,
+        barrier_id: int,
+        *,
+        name: str | None = None,
+        ha_open_entity_id: str | None = None,
+        ha_close_entity_id: str | None = None,
+    ) -> dict[str, object] | None:
+        with self.SessionLocal() as session:
+            row = session.get(Barrier, barrier_id)
+            if row is None:
+                return None
+            if name is not None:
+                row.name = name.strip()
+            if ha_open_entity_id is not None:
+                row.ha_open_entity_id = ha_open_entity_id.strip()
+            if ha_close_entity_id is not None:
+                row.ha_close_entity_id = ha_close_entity_id.strip()
+            row.updated_at = utc_now()
+            session.commit()
+            session.refresh(row)
+            return self._barrier_row(row)
+
+    def delete_barrier(self, barrier_id: int) -> bool:
+        with self.SessionLocal() as session:
+            row = session.get(Barrier, barrier_id)
+            if row is None:
+                return False
+            session.execute(
+                text("DELETE FROM detection_zones WHERE zone_type='barrier_check' AND barrier_id=:bid"),
+                {"bid": barrier_id},
+            )
+            session.delete(row)
+            session.commit()
+            return True
+
+    # ----------------------------------------------------------------- cameras
 
     def list_cameras(self, is_active: bool | None = None) -> list[dict[str, object]]:
         with self.SessionLocal() as session:
@@ -568,10 +706,12 @@ class Database:
 
             for index, zone in enumerate(limited):
                 raw_cross_zone_id = zone.get("cross_zone_id")
+                raw_barrier_id = zone.get("barrier_id")
                 session.add(
                     DetectionZone(
                         camera_id=camera_id,
                         zone_type="detection",
+                        barrier_id=int(raw_barrier_id) if raw_barrier_id is not None else None,
                         name=str(zone.get("name") or f"Zone {index + 1}"),
                         ha_open_entity_id=str(zone.get("ha_open_entity_id") or zone.get("open_entity_id") or ""),
                         ha_close_entity_id=str(zone.get("ha_close_entity_id") or zone.get("close_entity_id") or ""),
@@ -613,6 +753,7 @@ class Database:
         return {
             "id": row.id,
             "camera_id": row.camera_id,
+            "barrier_id": row.barrier_id,
             "zone_type": row.zone_type,
             "name": row.name,
             "ha_open_entity_id": row.ha_open_entity_id,
@@ -627,37 +768,51 @@ class Database:
             "cross_zone_id": row.cross_zone_id,
         }
 
-    def get_barrier_check_zone(self, camera_id: int | None) -> dict[str, object] | None:
-        """Return the barrier check zone for a camera, or None if not configured."""
+    def get_barrier_check_zone(self, barrier_id: int) -> dict[str, object] | None:
+        """Return the barrier check zone for a specific barrier."""
+        with self.SessionLocal() as session:
+            stmt = (
+                select(DetectionZone)
+                .where(DetectionZone.zone_type == "barrier_check")
+                .where(DetectionZone.barrier_id == barrier_id)
+                .limit(1)
+            )
+            row = session.execute(stmt).scalars().first()
+            return self._zone_row(row) if row is not None else None
+
+    def get_barrier_check_zones_for_camera(self, camera_id: int | None) -> list[dict[str, object]]:
+        """Return all barrier check zones on a given camera (for orchestrator and preview)."""
         with self.SessionLocal() as session:
             stmt = select(DetectionZone).where(DetectionZone.zone_type == "barrier_check")
             if camera_id is not None:
                 stmt = stmt.where(DetectionZone.camera_id == camera_id)
             else:
                 stmt = stmt.where(DetectionZone.camera_id.is_(None))
-            stmt = stmt.limit(1)
-            row = session.execute(stmt).scalars().first()
-            return self._zone_row(row) if row is not None else None
+            rows = session.execute(stmt).scalars().all()
+            return [self._zone_row(row) for row in rows]
 
     def replace_barrier_check_zone(
         self,
         zone: dict[str, object] | None,
-        camera_id: int | None = None,
+        barrier_id: int,
     ) -> dict[str, object] | None:
-        """Set or clear the barrier check zone for a camera."""
+        """Set or clear the barrier check zone for a specific barrier.
+
+        The zone dict must include 'camera_id' to indicate which camera feeds the check zone.
+        """
         with self.SessionLocal() as session:
-            stmt = session.query(DetectionZone).filter(DetectionZone.zone_type == "barrier_check")
-            if camera_id is None:
-                stmt = stmt.filter(DetectionZone.camera_id.is_(None))
-            else:
-                stmt = stmt.filter(DetectionZone.camera_id == camera_id)
-            stmt.delete(synchronize_session=False)
+            session.execute(
+                text("DELETE FROM detection_zones WHERE zone_type='barrier_check' AND barrier_id=:bid"),
+                {"bid": barrier_id},
+            )
 
             if zone is not None:
+                raw_camera_id = zone.get("camera_id")
                 row = DetectionZone(
-                    camera_id=camera_id,
+                    camera_id=int(raw_camera_id) if raw_camera_id is not None else None,
+                    barrier_id=barrier_id,
                     zone_type="barrier_check",
-                    name=str(zone.get("name") or "Barrier"),
+                    name=str(zone.get("name") or "Barrier check"),
                     ha_open_entity_id="",
                     ha_close_entity_id="",
                     x_min=float(zone.get("x_min", 0.0)),

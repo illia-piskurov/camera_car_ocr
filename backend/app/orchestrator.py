@@ -186,7 +186,8 @@ def _handle_detections(
     barrier: BarrierController,
     state: PipelineState,
     camera_id: int | None = None,
-    barrier_state: str | None = None,
+    zone_barrier_ids: dict[int | None, int | None] | None = None,
+    barrier_states: dict[int, str] | None = None,
 ) -> DetectionStageResult:
     result = DetectionStageResult(
         frame_last_decision=None,
@@ -256,6 +257,8 @@ def _handle_detections(
             state.mark_deny(plate, zone_id)
         zones_written.add(zone_id)
 
+        zone_bid = zone_barrier_ids.get(zone_id) if zone_barrier_ids else None
+        zone_barrier_state = barrier_states.get(zone_bid) if (barrier_states and zone_bid is not None) else None
         stages.execute_barrier_action(
             should_open=should_open,
             detection=decision_detection,
@@ -263,7 +266,7 @@ def _handle_detections(
             barrier=barrier,
             cfg=cfg,
             zone_states=state.zone_states,
-            barrier_state=barrier_state,
+            barrier_state=zone_barrier_state,
         )
 
     LOG.info(
@@ -532,21 +535,29 @@ def _poll_single_camera(
         state.close_all_zones(barrier, open_only=cfg.barrier_open_only)
         return
 
-    # Barrier state detection (must run before handle_detections so state is available)
     now_monotonic = time.monotonic()
-    barrier_state: str | None = None
+
+    # Barrier state detection per barrier — must run before handle_detections
+    barrier_states: dict[int, str] = {}  # barrier_id → state string
     if cfg.barrier_state_enabled:
-        barrier_check_zone = db.get_barrier_check_zone(camera_id)
-        if barrier_check_zone:
-            if state.barrier_detector is None:
-                state.barrier_detector = BarrierStateDetector(
+        barrier_check_zones = db.get_barrier_check_zones_for_camera(camera_id)
+        active_barrier_ids: set[int] = set()
+        for bcz in barrier_check_zones:
+            bid = bcz.get("barrier_id")
+            if bid is None:
+                continue
+            bid = int(bid)
+            active_barrier_ids.add(bid)
+            if bid not in state.barrier_detectors:
+                state.barrier_detectors[bid] = BarrierStateDetector(
                     threshold=cfg.barrier_state_threshold,
                     reference_delay_sec=cfg.barrier_state_reference_delay_sec,
                 )
-            barrier_state = state.barrier_detector.update(frame, barrier_check_zone, now_monotonic)
-            LOG.debug("Barrier state camera=%s state=%s", camera_id, barrier_state)
-        else:
-            state.barrier_detector = None
+            barrier_states[bid] = state.barrier_detectors[bid].update(frame, bcz, now_monotonic)
+            LOG.debug("Barrier state camera=%s barrier=%s state=%s", camera_id, bid, barrier_states[bid])
+        for bid in list(state.barrier_detectors):
+            if bid not in active_barrier_ids:
+                del state.barrier_detectors[bid]
 
     # Detect plates in zones using single-shot detection
     detections: list[PlateDetection] = []
@@ -571,6 +582,12 @@ def _poll_single_camera(
         min_ocr_confidence=min_ocr_conf,
     )
 
+    # Build zone → barrier mapping for per-zone state lookups
+    zone_barrier_ids: dict[int | None, int | None] = {
+        int(z["id"]): (int(z["barrier_id"]) if z.get("barrier_id") is not None else None)
+        for z in stage.active_zones
+    }
+
     # Make decisions and act on detections
     detection_result = _handle_detections(
         detections=detections,
@@ -580,16 +597,18 @@ def _poll_single_camera(
         barrier=barrier,
         state=state,
         camera_id=camera_id,
-        barrier_state=barrier_state,
+        zone_barrier_ids=zone_barrier_ids,
+        barrier_states=barrier_states,
     )
 
-    # Notify detector after a successful open so it schedules reference capture
-    if (
-        cfg.barrier_state_enabled
-        and state.barrier_detector is not None
-        and detection_result.frame_last_decision == "open"
-    ):
-        state.barrier_detector.notify_opened(now_monotonic)
+    # Notify relevant barrier detector after a successful open
+    if cfg.barrier_state_enabled and detection_result.frame_last_decision == "open":
+        opened_zone_id = detection_result.frame_last_zone  # zone_name, not id — use detection
+        # Look up barrier_id for the opened zone via zone_barrier_ids
+        for zid, bid in zone_barrier_ids.items():
+            if bid is not None and bid in state.barrier_detectors:
+                if any(d.zone_id == zid for d in detections if d.normalized_text == detection_result.frame_last_plate):
+                    state.barrier_detectors[bid].notify_opened(now_monotonic)
 
     # Manage zone hold times
     _refresh_zone_hold(
@@ -608,7 +627,12 @@ def _poll_single_camera(
             now_monotonic=now_monotonic,
         )
     state.prev_frame = frame
-    state.close_all_zones(barrier, open_only=cfg.barrier_open_only, barrier_state=barrier_state)
+    state.close_all_zones(
+        barrier,
+        open_only=cfg.barrier_open_only,
+        zone_barrier_ids=zone_barrier_ids,
+        barrier_states=barrier_states,
+    )
 
     # Generate artifacts (snapshots and preview)
     _snapshot_stage(
@@ -664,20 +688,29 @@ def run_camera_worker(camera_id: int, settings: Settings | None = None) -> None:
         raise
 
     zones = db.get_zones(include_disabled=True, camera_id=camera_id)
+    barriers = db.list_barriers()
+    barrier_by_id = {int(b["id"]): b for b in barriers}
+
+    def _zone_entity(zone: dict, action: str) -> str:
+        bid = zone.get("barrier_id")
+        if bid is not None and int(bid) in barrier_by_id:
+            return str(barrier_by_id[int(bid)].get(f"ha_{action}_entity_id") or "")
+        return str(zone.get(f"ha_{action}_entity_id") or "")
+
     barrier = BarrierController(
         dry_run=cfg.dry_run_open,
         action_mode=cfg.barrier_action_mode,
         ha_base_url=cfg.barrier_ha_base_url,
         ha_token=cfg.barrier_ha_token,
         zone_open_entity_ids={
-            int(zone["id"]): str(zone.get("ha_open_entity_id") or "")
+            int(zone["id"]): _zone_entity(zone, "open")
             for zone in zones
-            if zone.get("ha_open_entity_id")
+            if _zone_entity(zone, "open")
         },
         zone_close_entity_ids={
-            int(zone["id"]): str(zone.get("ha_close_entity_id") or "")
+            int(zone["id"]): _zone_entity(zone, "close")
             for zone in zones
-            if zone.get("ha_close_entity_id")
+            if _zone_entity(zone, "close")
         },
         timeout_sec=cfg.barrier_request_timeout_sec,
         retries=cfg.barrier_request_retries,
@@ -704,15 +737,24 @@ def run_camera_worker(camera_id: int, settings: Settings | None = None) -> None:
                 return
 
             current_zones = db.get_zones(include_disabled=True, camera_id=camera_id)
+            current_barriers = db.list_barriers()
+            current_barrier_by_id = {int(b["id"]): b for b in current_barriers}
+
+            def _cur_zone_entity(zone: dict, action: str) -> str:
+                bid = zone.get("barrier_id")
+                if bid is not None and int(bid) in current_barrier_by_id:
+                    return str(current_barrier_by_id[int(bid)].get(f"ha_{action}_entity_id") or "")
+                return str(zone.get(f"ha_{action}_entity_id") or "")
+
             barrier.zone_open_entity_ids = {
-                int(z["id"]): str(z.get("ha_open_entity_id") or "")
+                int(z["id"]): _cur_zone_entity(z, "open")
                 for z in current_zones
-                if z.get("ha_open_entity_id")
+                if _cur_zone_entity(z, "open")
             }
             barrier.zone_close_entity_ids = {
-                int(z["id"]): str(z.get("ha_close_entity_id") or "")
+                int(z["id"]): _cur_zone_entity(z, "close")
                 for z in current_zones
-                if z.get("ha_close_entity_id")
+                if _cur_zone_entity(z, "close")
             }
 
             try:

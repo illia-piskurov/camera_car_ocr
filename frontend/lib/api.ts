@@ -1,4 +1,5 @@
 import type {
+    Barrier,
     BarrierZone,
     Camera,
     CameraCreatePayload,
@@ -282,25 +283,64 @@ export async function fetchCameraPeerZones(cameraId: number, signal?: AbortSigna
     return data.peer_zones
 }
 
-export async function saveBarrierZone(
-    cameraId: number,
-    zone: { name?: string; x_min: number; y_min: number; x_max: number; y_max: number },
+export async function listBarriers(signal?: AbortSignal): Promise<Barrier[]> {
+    const response = await fetch(`${API_BASE}/api/barriers`, { cache: "no-store", signal })
+    if (!response.ok) throw new Error(`List barriers failed: ${response.status}`)
+    const data = (await response.json()) as { barriers: Barrier[] }
+    return data.barriers
+}
+
+export async function createBarrier(payload: { name: string; ha_open_entity_id: string; ha_close_entity_id: string }): Promise<Barrier> {
+    const response = await fetch(`${API_BASE}/api/barriers`, {
+        method: "POST",
+        cache: "no-store",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+    })
+    if (!response.ok) throw new Error(`Create barrier failed: ${response.status}`)
+    const data = (await response.json()) as { barrier: Barrier }
+    return data.barrier
+}
+
+export async function updateBarrier(barrierId: number, payload: { name?: string; ha_open_entity_id?: string; ha_close_entity_id?: string }): Promise<Barrier> {
+    const response = await fetch(`${API_BASE}/api/barriers/${barrierId}`, {
+        method: "PUT",
+        cache: "no-store",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+    })
+    if (!response.ok) throw new Error(`Update barrier failed: ${response.status}`)
+    const data = (await response.json()) as { barrier: Barrier }
+    return data.barrier
+}
+
+export async function deleteBarrier(barrierId: number): Promise<void> {
+    const response = await fetch(`${API_BASE}/api/barriers/${barrierId}`, {
+        method: "DELETE",
+        cache: "no-store",
+    })
+    if (!response.ok) throw new Error(`Delete barrier failed: ${response.status}`)
+}
+
+export async function saveBarrierCheckZone(
+    barrierId: number,
+    zone: { camera_id: number | null; name?: string; x_min: number; y_min: number; x_max: number; y_max: number },
 ): Promise<BarrierZone | null> {
-    const response = await fetch(`${API_BASE}/api/cameras/${cameraId}/barrier-zone`, {
+    const response = await fetch(`${API_BASE}/api/barriers/${barrierId}/check-zone`, {
         method: "PUT",
         cache: "no-store",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(zone),
     })
-    if (!response.ok) throw new Error(`Save barrier zone failed: ${response.status}`)
+    if (!response.ok) throw new Error(`Save barrier check zone failed: ${response.status}`)
     const data = (await response.json()) as { zone: BarrierZone | null }
     return data.zone
 }
 
-export async function deleteBarrierZone(cameraId: number): Promise<void> {
-    const response = await fetch(`${API_BASE}/api/cameras/${cameraId}/barrier-zone`, {
+export async function deleteBarrierCheckZone(barrierId: number): Promise<void> {
+    const response = await fetch(`${API_BASE}/api/barriers/${barrierId}/check-zone`, {
         method: "DELETE",
         cache: "no-store",
     })
-    if (!response.ok) throw new Error(`Delete barrier zone failed: ${response.status}`)
+    if (!response.ok) throw new Error(`Delete barrier check zone failed: ${response.status}`)
 }

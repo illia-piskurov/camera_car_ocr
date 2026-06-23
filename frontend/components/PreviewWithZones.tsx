@@ -8,8 +8,9 @@ type PreviewWithZonesProps = {
     imageSrc: string | null
     zones: DetectionZone[]
     onChangeZones: (zones: DetectionZone[]) => void
-    barrierZone?: BarrierZone | null
-    onChangeBarrierZone?: (zone: BarrierZone) => void
+    barrierZones?: BarrierZone[]
+    activeBarrierZone?: BarrierZone | null
+    onChangeActiveBarrierZone?: (zone: BarrierZone) => void
     headerAction?: ReactNode
 }
 
@@ -49,8 +50,9 @@ export function PreviewWithZones({
     imageSrc,
     zones,
     onChangeZones,
-    barrierZone,
-    onChangeBarrierZone,
+    barrierZones,
+    activeBarrierZone,
+    onChangeActiveBarrierZone,
     headerAction,
 }: PreviewWithZonesProps) {
     const overlayRef = useRef<HTMLDivElement | null>(null)
@@ -112,25 +114,25 @@ export function PreviewWithZones({
 
             const updated = zones.map((z, i) => (i === resizing.zoneIndex ? newZone : z))
             onChangeZones(updated)
-        } else if (resizingBarrier && barrierZone && onChangeBarrierZone) {
+        } else if (resizingBarrier && activeBarrierZone && onChangeActiveBarrierZone) {
             const point = pointToNormalized(event.clientX, event.clientY)
             if (!point) return
 
-            let bz = { ...barrierZone }
+            let bz = { ...activeBarrierZone }
             if (resizingBarrier.corner === "tl") {
-                bz.x_min = Math.min(point.x, barrierZone.x_max - 0.02)
-                bz.y_min = Math.min(point.y, barrierZone.y_max - 0.02)
+                bz.x_min = Math.min(point.x, activeBarrierZone.x_max - 0.02)
+                bz.y_min = Math.min(point.y, activeBarrierZone.y_max - 0.02)
             } else if (resizingBarrier.corner === "tr") {
-                bz.x_max = Math.max(point.x, barrierZone.x_min + 0.02)
-                bz.y_min = Math.min(point.y, barrierZone.y_max - 0.02)
+                bz.x_max = Math.max(point.x, activeBarrierZone.x_min + 0.02)
+                bz.y_min = Math.min(point.y, activeBarrierZone.y_max - 0.02)
             } else if (resizingBarrier.corner === "bl") {
-                bz.x_min = Math.min(point.x, barrierZone.x_max - 0.02)
-                bz.y_max = Math.max(point.y, barrierZone.y_min + 0.02)
+                bz.x_min = Math.min(point.x, activeBarrierZone.x_max - 0.02)
+                bz.y_max = Math.max(point.y, activeBarrierZone.y_min + 0.02)
             } else if (resizingBarrier.corner === "br") {
-                bz.x_max = Math.max(point.x, barrierZone.x_min + 0.02)
-                bz.y_max = Math.max(point.y, barrierZone.y_min + 0.02)
+                bz.x_max = Math.max(point.x, activeBarrierZone.x_min + 0.02)
+                bz.y_max = Math.max(point.y, activeBarrierZone.y_min + 0.02)
             }
-            onChangeBarrierZone(bz)
+            onChangeActiveBarrierZone(bz)
         }
     }
 
@@ -210,19 +212,37 @@ export function PreviewWithZones({
                             )
                         })}
 
-                        {/* Barrier Check Zone (amber dashed) */}
-                        {barrierZone && (
+                        {/* Saved barrier check zones (read-only, no handles) */}
+                        {(barrierZones ?? []).map((bz, idx) => (
+                            <div
+                                key={`bz-saved-${bz.id}-${idx}`}
+                                className="pointer-events-none absolute border-2 border-dashed border-amber-400/40"
+                                style={{
+                                    left: `${bz.x_min * 100}%`,
+                                    top: `${bz.y_min * 100}%`,
+                                    width: `${(bz.x_max - bz.x_min) * 100}%`,
+                                    height: `${(bz.y_max - bz.y_min) * 100}%`,
+                                }}
+                            >
+                                <span className="absolute -top-6 left-0 rounded bg-black/70 px-2 py-0.5 text-[10px] text-amber-400/70">
+                                    {bz.name?.trim() || (bz.barrier_id != null ? `Barrier ${bz.barrier_id}` : "Barrier zone")}
+                                </span>
+                            </div>
+                        ))}
+
+                        {/* Active barrier check zone (editable, with resize handles) */}
+                        {activeBarrierZone && (
                             <div
                                 className="absolute border-2 border-dashed border-amber-400"
                                 style={{
-                                    left: `${barrierZone.x_min * 100}%`,
-                                    top: `${barrierZone.y_min * 100}%`,
-                                    width: `${(barrierZone.x_max - barrierZone.x_min) * 100}%`,
-                                    height: `${(barrierZone.y_max - barrierZone.y_min) * 100}%`,
+                                    left: `${activeBarrierZone.x_min * 100}%`,
+                                    top: `${activeBarrierZone.y_min * 100}%`,
+                                    width: `${(activeBarrierZone.x_max - activeBarrierZone.x_min) * 100}%`,
+                                    height: `${(activeBarrierZone.y_max - activeBarrierZone.y_min) * 100}%`,
                                 }}
                             >
                                 <span className="absolute -top-6 left-0 rounded bg-black/70 px-2 py-0.5 text-[10px] text-amber-300">
-                                    {barrierZone.name?.trim() || "Barrier zone"}
+                                    {activeBarrierZone.name?.trim() || (activeBarrierZone.barrier_id != null ? `Barrier ${activeBarrierZone.barrier_id}` : "Barrier zone")}
                                 </span>
 
                                 <div

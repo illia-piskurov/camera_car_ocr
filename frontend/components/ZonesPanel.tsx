@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState } from "react"
 import { Button } from "@/components/ui/button"
 import { fetchCameraPeerZones } from "@/lib/api"
-import type { BarrierZone, DetectionZone, PeerZone } from "@/lib/types"
+import type { Barrier, BarrierZone, DetectionZone, PeerZone } from "@/lib/types"
 
 type ZonesPanelProps = {
     zones: DetectionZone[]
@@ -13,34 +13,32 @@ type ZonesPanelProps = {
     zonesMessage: string | null
     cameraId: number | null
     cameraGroupId: number | null
+    barriers: Barrier[]
     onChangeZones: (zones: DetectionZone[]) => void
     onSaveZones: () => void
     onResetZones: () => void
     onUpdateZone: (index: number, updater: (zone: DetectionZone) => DetectionZone) => void
     onRemoveZone: (index: number) => void
-    barrierZone: BarrierZone | null
-    barrierZoneDirty: boolean
-    barrierZoneSaving: boolean
-    barrierZoneMessage: string | null
-    onSetBarrierZone: () => void
-    onSaveBarrierZone: () => void
-    onDeleteBarrierZone: () => void
-    onResetBarrierZone: () => void
+    onOpenBarriers: () => void
+    activeCheckBarrierId: number | null
+    activeCheckZone: BarrierZone | null
+    activeCheckZoneDirty: boolean
+    activeCheckZoneSaving: boolean
+    activeCheckZoneMessage: string | null
+    onSelectCheckBarrier: (barrierId: number | null) => void
+    onSetCheckZone: () => void
+    onSaveCheckZone: () => void
+    onDeleteCheckZone: () => void
+    onResetCheckZone: () => void
 }
 
-function inferZoneLabel(zone: DetectionZone, fallbackIndex: number): string {
+function inferZoneLabel(zone: DetectionZone, fallbackIndex: number, barriers: Barrier[]): string {
     const explicit = (zone.name ?? "").trim()
-    if (explicit) {
-        return explicit
-    }
+    if (explicit) return explicit
 
-    const openEntity = (zone.ha_open_entity_id ?? "").trim()
-    const closeEntity = (zone.ha_close_entity_id ?? "").trim()
-    if (openEntity) {
-        return openEntity
-    }
-    if (closeEntity) {
-        return closeEntity
+    if (zone.barrier_id != null) {
+        const barrier = barriers.find((b) => b.id === zone.barrier_id)
+        if (barrier) return barrier.name || `Barrier ${barrier.id}`
     }
 
     return `Zone ${fallbackIndex + 1}`
@@ -54,19 +52,23 @@ export function ZonesPanel({
     zonesMessage,
     cameraId,
     cameraGroupId,
+    barriers,
     onChangeZones,
     onSaveZones,
     onResetZones,
     onUpdateZone,
     onRemoveZone,
-    barrierZone,
-    barrierZoneDirty,
-    barrierZoneSaving,
-    barrierZoneMessage,
-    onSetBarrierZone,
-    onSaveBarrierZone,
-    onDeleteBarrierZone,
-    onResetBarrierZone,
+    onOpenBarriers,
+    activeCheckBarrierId,
+    activeCheckZone,
+    activeCheckZoneDirty,
+    activeCheckZoneSaving,
+    activeCheckZoneMessage,
+    onSelectCheckBarrier,
+    onSetCheckZone,
+    onSaveCheckZone,
+    onDeleteCheckZone,
+    onResetCheckZone,
 }: ZonesPanelProps) {
     const visibleZones = useMemo(() => {
         return [...zones].sort((a, b) => a.sort_order - b.sort_order)
@@ -96,6 +98,13 @@ export function ZonesPanel({
                 <h3 className="text-xs uppercase tracking-widest text-slate-400">
                     Zones ({zones.length}/{maxZones})
                 </h3>
+                <button
+                    type="button"
+                    onClick={onOpenBarriers}
+                    className="rounded border border-slate-600/70 bg-slate-700/80 px-2 py-1 text-[11px] text-slate-300 hover:bg-slate-600/90 hover:text-slate-100"
+                >
+                    Barriers
+                </button>
             </div>
 
             {/* Add Zone Button */}
@@ -139,8 +148,8 @@ export function ZonesPanel({
                                 className="space-y-2 rounded border border-slate-700/70 bg-slate-800/55 p-2"
                             >
                                 <div className="grid grid-cols-[1fr_auto_auto] items-center gap-2">
-                                    <p className="truncate text-xs text-slate-200" title={inferZoneLabel(zone, zoneIndex)}>
-                                        {inferZoneLabel(zone, zoneIndex)}
+                                    <p className="truncate text-xs text-slate-200" title={inferZoneLabel(zone, zoneIndex, barriers)}>
+                                        {inferZoneLabel(zone, zoneIndex, barriers)}
                                     </p>
                                     <button
                                         type="button"
@@ -165,43 +174,24 @@ export function ZonesPanel({
 
                                 <div className="grid gap-2">
                                     <label className="space-y-1 text-[11px] text-slate-400">
-                                        <span>Open Entity ID</span>
-                                        <input
-                                            value={zone.ha_open_entity_id ?? ""}
+                                        <span>Barrier</span>
+                                        <select
+                                            value={zone.barrier_id ?? ""}
                                             onChange={(event) =>
-                                                onUpdateZone(zoneIndex, (prev) => {
-                                                    const nextOpen = event.target.value
-                                                    const hasName = Boolean((prev.name ?? "").trim())
-                                                    return {
-                                                        ...prev,
-                                                        ha_open_entity_id: nextOpen,
-                                                        name: hasName ? prev.name : nextOpen || prev.ha_close_entity_id || prev.name,
-                                                    }
-                                                })
+                                                onUpdateZone(zoneIndex, (prev) => ({
+                                                    ...prev,
+                                                    barrier_id: event.target.value ? parseInt(event.target.value) : null,
+                                                }))
                                             }
-                                            className="rounded border border-slate-600 bg-slate-900 px-2 py-1 text-xs text-slate-100 outline-none focus:border-blue-400"
-                                            placeholder="input_button.gate_open"
-                                        />
-                                    </label>
-
-                                    <label className="space-y-1 text-[11px] text-slate-400">
-                                        <span>Close Entity ID</span>
-                                        <input
-                                            value={zone.ha_close_entity_id ?? ""}
-                                            onChange={(event) =>
-                                                onUpdateZone(zoneIndex, (prev) => {
-                                                    const nextClose = event.target.value
-                                                    const hasName = Boolean((prev.name ?? "").trim())
-                                                    return {
-                                                        ...prev,
-                                                        ha_close_entity_id: nextClose,
-                                                        name: hasName ? prev.name : prev.ha_open_entity_id || nextClose || prev.name,
-                                                    }
-                                                })
-                                            }
-                                            className="rounded border border-slate-600 bg-slate-900 px-2 py-1 text-xs text-slate-100 outline-none focus:border-blue-400"
-                                            placeholder="input_button.gate_close"
-                                        />
+                                            className="w-full rounded border border-slate-600 bg-slate-800 px-2 py-1 text-xs text-slate-100 outline-none focus:border-blue-400"
+                                        >
+                                            <option value="">— No barrier assigned —</option>
+                                            {barriers.map((b) => (
+                                                <option key={b.id} value={b.id}>
+                                                    {b.name || `Barrier ${b.id}`}
+                                                </option>
+                                            ))}
+                                        </select>
                                     </label>
 
                                     <label className="space-y-1 text-[11px] text-slate-400">
@@ -211,29 +201,10 @@ export function ZonesPanel({
                                             onChange={(event) =>
                                                 onUpdateZone(zoneIndex, (prev) => ({ ...prev, name: event.target.value }))
                                             }
-                                            onBlur={() =>
-                                                onUpdateZone(zoneIndex, (prev) => {
-                                                    const currentName = (prev.name ?? "").trim()
-                                                    if (currentName) {
-                                                        return prev
-                                                    }
-
-                                                    const openEntity = (prev.ha_open_entity_id ?? "").trim()
-                                                    const closeEntity = (prev.ha_close_entity_id ?? "").trim()
-                                                    return {
-                                                        ...prev,
-                                                        name: openEntity || closeEntity || "",
-                                                    }
-                                                })
-                                            }
                                             className="rounded border border-slate-600 bg-slate-900 px-2 py-1 text-xs text-slate-100 outline-none focus:border-blue-400"
                                             placeholder="Optional display label"
                                         />
                                     </label>
-
-                                    <p className="text-[11px] text-slate-400">
-                                        If label is empty, it is auto-filled from entity IDs. Duplicate entity IDs across zones are allowed.
-                                    </p>
 
                                     {/* Cross-camera suppression config — only visible when camera is in a group with peers */}
                                     {inGroup && (
@@ -280,7 +251,7 @@ export function ZonesPanel({
                     })}
                 </div>
             ) : (
-                <p className="text-xs text-slate-400">No zones configured. Add a zone and set entity IDs.</p>
+                <p className="text-xs text-slate-400">No zones configured. Add a zone and assign a barrier.</p>
             )}
 
             {/* Action Buttons */}
@@ -308,65 +279,95 @@ export function ZonesPanel({
             {/* Status Message */}
             {zonesMessage && <p className={`text-xs ${messageColor}`}>{zonesMessage}</p>}
 
-            {/* Barrier Detection Zone */}
+            {/* Barrier Check Zone */}
             <div className="border-t border-slate-700/70 pt-3 space-y-2">
-                <h3 className="text-xs uppercase tracking-widest text-amber-400/80">Barrier Detection Zone</h3>
+                <h3 className="text-xs uppercase tracking-widest text-amber-400/80">Barrier Check Zone</h3>
                 <p className="text-[11px] text-slate-400">
-                    Draw a zone over the barrier area on the preview image. The system will use it to detect whether the barrier is open or closed.
+                    Select a barrier and draw its check zone on the preview. The system uses it to detect whether the barrier is open or closed.
                 </p>
 
-                {barrierZone ? (
-                    <div className="space-y-2 rounded border border-amber-500/30 bg-amber-500/5 p-2">
-                        <p className="text-[11px] text-amber-300">
-                            Zone configured. Drag the amber handles on the preview to adjust.
-                        </p>
-                        <div className="flex gap-2">
-                            <Button
-                                size="sm"
-                                variant="default"
-                                onClick={onSaveBarrierZone}
-                                disabled={!barrierZoneDirty || barrierZoneSaving}
-                                className="flex-1 border border-amber-500/30 bg-amber-600/80 text-amber-50 hover:bg-amber-500"
-                            >
-                                {barrierZoneSaving ? "Saving..." : "Save"}
-                            </Button>
-                            <Button
-                                size="sm"
-                                variant="secondary"
-                                onClick={onResetBarrierZone}
-                                disabled={!barrierZoneDirty}
-                                className="border border-slate-600/70 bg-slate-700/80 text-slate-100 hover:bg-slate-600/90"
-                            >
-                                Reset
-                            </Button>
-                            <Button
-                                size="sm"
-                                variant="secondary"
-                                onClick={onDeleteBarrierZone}
-                                disabled={barrierZoneSaving}
-                                className="border border-red-500/40 bg-red-500/10 text-red-300 hover:bg-red-500/20"
-                            >
-                                Delete
-                            </Button>
-                        </div>
-                    </div>
+                {barriers.length === 0 ? (
+                    <p className="text-[11px] text-slate-500">
+                        No barriers configured.{" "}
+                        <button type="button" onClick={onOpenBarriers} className="text-amber-400/80 underline hover:text-amber-300">
+                            Open Barriers
+                        </button>{" "}
+                        to add one.
+                    </p>
                 ) : (
-                    <div className="space-y-2">
-                        <p className="text-[11px] text-slate-500">No zone configured.</p>
-                        <Button
-                            size="sm"
-                            variant="secondary"
-                            onClick={onSetBarrierZone}
-                            className="w-full border border-amber-500/30 bg-amber-500/10 text-amber-200 hover:bg-amber-500/20"
-                        >
-                            + Set Barrier Zone
-                        </Button>
-                    </div>
+                    <>
+                        <label className="space-y-1 text-[11px] text-slate-400">
+                            <span>Barrier</span>
+                            <select
+                                value={activeCheckBarrierId ?? ""}
+                                onChange={(e) => onSelectCheckBarrier(e.target.value ? parseInt(e.target.value) : null)}
+                                className="w-full rounded border border-slate-600 bg-slate-800 px-2 py-1 text-xs text-slate-100 outline-none focus:border-amber-400"
+                            >
+                                <option value="">— Select barrier —</option>
+                                {barriers.map((b) => (
+                                    <option key={b.id} value={b.id}>
+                                        {b.name || `Barrier ${b.id}`}
+                                    </option>
+                                ))}
+                            </select>
+                        </label>
+
+                        {activeCheckBarrierId !== null && (
+                            activeCheckZone ? (
+                                <div className="space-y-2 rounded border border-amber-500/30 bg-amber-500/5 p-2">
+                                    <p className="text-[11px] text-amber-300">
+                                        Zone configured. Drag the amber handles on the preview to adjust.
+                                    </p>
+                                    <div className="flex gap-2">
+                                        <Button
+                                            size="sm"
+                                            variant="default"
+                                            onClick={onSaveCheckZone}
+                                            disabled={!activeCheckZoneDirty || activeCheckZoneSaving}
+                                            className="flex-1 border border-amber-500/30 bg-amber-600/80 text-amber-50 hover:bg-amber-500"
+                                        >
+                                            {activeCheckZoneSaving ? "Saving..." : "Save"}
+                                        </Button>
+                                        <Button
+                                            size="sm"
+                                            variant="secondary"
+                                            onClick={onResetCheckZone}
+                                            disabled={!activeCheckZoneDirty}
+                                            className="border border-slate-600/70 bg-slate-700/80 text-slate-100 hover:bg-slate-600/90"
+                                        >
+                                            Reset
+                                        </Button>
+                                        <Button
+                                            size="sm"
+                                            variant="secondary"
+                                            onClick={onDeleteCheckZone}
+                                            disabled={activeCheckZoneSaving}
+                                            className="border border-red-500/40 bg-red-500/10 text-red-300 hover:bg-red-500/20"
+                                        >
+                                            Delete
+                                        </Button>
+                                    </div>
+                                </div>
+                            ) : (
+                                <div className="space-y-2">
+                                    <p className="text-[11px] text-slate-500">No check zone configured for this barrier on this camera.</p>
+                                    <Button
+                                        size="sm"
+                                        variant="secondary"
+                                        onClick={onSetCheckZone}
+                                        className="w-full border border-amber-500/30 bg-amber-500/10 text-amber-200 hover:bg-amber-500/20"
+                                    >
+                                        + Set Check Zone
+                                    </Button>
+                                </div>
+                            )
+                        )}
+                    </>
                 )}
 
-                {barrierZoneMessage && (
-                    <p className={`text-xs ${barrierZoneMessage.toLowerCase().includes("saved") || barrierZoneMessage.toLowerCase().includes("deleted") ? "text-emerald-300" : "text-red-300"}`}>
-                        {barrierZoneMessage}
+                {activeCheckZoneMessage && (
+                    <p className={`text-xs ${activeCheckZoneMessage.toLowerCase().includes("saved") || activeCheckZoneMessage.toLowerCase().includes("deleted") ? "text-emerald-300" : "text-red-300"}`}>
+                        {activeCheckZoneMessage}
                     </p>
                 )}
             </div>

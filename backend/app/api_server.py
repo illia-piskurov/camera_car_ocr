@@ -40,6 +40,7 @@ class ZoneInput(BaseModel):
     name: str | None = None
     ha_open_entity_id: str = Field(default="")
     ha_close_entity_id: str = Field(default="")
+    barrier_id: int | None = None
     x_min: float = Field(ge=0.0, le=1.0)
     y_min: float = Field(ge=0.0, le=1.0)
     x_max: float = Field(ge=0.0, le=1.0)
@@ -51,7 +52,20 @@ class ZoneInput(BaseModel):
     zone_type: str = "detection"
 
 
-class BarrierZoneInput(BaseModel):
+class BarrierInput(BaseModel):
+    name: str = Field(default="", max_length=128)
+    ha_open_entity_id: str = Field(default="", max_length=128)
+    ha_close_entity_id: str = Field(default="", max_length=128)
+
+
+class BarrierUpdateInput(BaseModel):
+    name: str | None = Field(default=None, max_length=128)
+    ha_open_entity_id: str | None = Field(default=None, max_length=128)
+    ha_close_entity_id: str | None = Field(default=None, max_length=128)
+
+
+class BarrierCheckZoneInput(BaseModel):
+    camera_id: int | None = None
     name: str | None = None
     x_min: float = Field(ge=0.0, le=1.0)
     y_min: float = Field(ge=0.0, le=1.0)
@@ -128,6 +142,77 @@ def health() -> dict[str, object]:
         "service": "backend",
         "db": "ok" if db_ok else "unreachable",
     }
+
+
+@app.get("/api/barriers")
+def list_barriers() -> dict[str, object]:
+    return {"barriers": db.list_barriers()}
+
+
+@app.post("/api/barriers")
+def create_barrier(payload: BarrierInput) -> dict[str, object]:
+    barrier = db.create_barrier(
+        name=payload.name,
+        ha_open_entity_id=payload.ha_open_entity_id,
+        ha_close_entity_id=payload.ha_close_entity_id,
+    )
+    return {"status": "ok", "barrier": barrier}
+
+
+@app.put("/api/barriers/{barrier_id}")
+def update_barrier(barrier_id: int, payload: BarrierUpdateInput) -> dict[str, object]:
+    barrier = db.update_barrier(
+        barrier_id,
+        name=payload.name,
+        ha_open_entity_id=payload.ha_open_entity_id,
+        ha_close_entity_id=payload.ha_close_entity_id,
+    )
+    if barrier is None:
+        raise HTTPException(status_code=404, detail=f"Barrier {barrier_id} not found")
+    return {"status": "ok", "barrier": barrier}
+
+
+@app.delete("/api/barriers/{barrier_id}")
+def delete_barrier(barrier_id: int) -> dict[str, object]:
+    ok = db.delete_barrier(barrier_id)
+    if not ok:
+        raise HTTPException(status_code=404, detail=f"Barrier {barrier_id} not found")
+    return {"status": "ok"}
+
+
+@app.get("/api/barriers/{barrier_id}/check-zone")
+def get_barrier_check_zone(barrier_id: int) -> dict[str, object]:
+    if db.get_barrier(barrier_id) is None:
+        raise HTTPException(status_code=404, detail=f"Barrier {barrier_id} not found")
+    zone = db.get_barrier_check_zone(barrier_id)
+    return {"zone": zone}
+
+
+@app.put("/api/barriers/{barrier_id}/check-zone")
+def put_barrier_check_zone(barrier_id: int, payload: BarrierCheckZoneInput) -> dict[str, object]:
+    if db.get_barrier(barrier_id) is None:
+        raise HTTPException(status_code=404, detail=f"Barrier {barrier_id} not found")
+    zone_data = sanitize_zone(
+        {
+            "camera_id": payload.camera_id,
+            "name": payload.name or "Barrier check",
+            "x_min": payload.x_min,
+            "y_min": payload.y_min,
+            "x_max": payload.x_max,
+            "y_max": payload.y_max,
+        },
+        default_name="Barrier check",
+    )
+    saved = db.replace_barrier_check_zone(zone_data, barrier_id=barrier_id)
+    return {"zone": saved}
+
+
+@app.delete("/api/barriers/{barrier_id}/check-zone")
+def delete_barrier_check_zone(barrier_id: int) -> dict[str, object]:
+    if db.get_barrier(barrier_id) is None:
+        raise HTTPException(status_code=404, detail=f"Barrier {barrier_id} not found")
+    db.replace_barrier_check_zone(None, barrier_id=barrier_id)
+    return {"status": "ok"}
 
 
 @app.get("/api/camera-groups")
@@ -394,7 +479,7 @@ def camera_dashboard(camera_id: int) -> dict[str, object]:
             "barrier_action_mode": cfg.barrier_action_mode,
             "barrier_close_delay_sec": cfg.barrier_close_delay_sec,
             "barrier_live_configured": cfg.is_ha_configured() and any(
-                z.get("ha_open_entity_id") for z in db.get_zones(include_disabled=False, camera_id=camera_id)
+                b.get("ha_open_entity_id") for b in db.list_barriers()
             ),
             "ocr_open_threshold": cfg.ocr_open_threshold,
             "ocr_extend_threshold": cfg.ocr_extend_threshold,
@@ -530,44 +615,6 @@ def put_camera_zones(camera_id: int, payload: ZonesPayload) -> dict[str, object]
     }
 
 
-@app.get("/api/cameras/{camera_id}/barrier-zone")
-def get_camera_barrier_zone(camera_id: int) -> dict[str, object]:
-    """Get the barrier check zone for a camera."""
-    camera = db.get_camera(camera_id)
-    if camera is None:
-        raise HTTPException(status_code=404, detail=f"Camera {camera_id} not found")
-    zone = db.get_barrier_check_zone(camera_id)
-    return {"zone": zone}
-
-
-@app.put("/api/cameras/{camera_id}/barrier-zone")
-def put_camera_barrier_zone(camera_id: int, payload: BarrierZoneInput) -> dict[str, object]:
-    """Set the barrier check zone for a camera."""
-    camera = db.get_camera(camera_id)
-    if camera is None:
-        raise HTTPException(status_code=404, detail=f"Camera {camera_id} not found")
-    zone_data = sanitize_zone(
-        {
-            "name": payload.name or "Barrier",
-            "x_min": payload.x_min,
-            "y_min": payload.y_min,
-            "x_max": payload.x_max,
-            "y_max": payload.y_max,
-        },
-        default_name="Barrier",
-    )
-    saved = db.replace_barrier_check_zone(zone_data, camera_id=camera_id)
-    return {"zone": saved}
-
-
-@app.delete("/api/cameras/{camera_id}/barrier-zone")
-def delete_camera_barrier_zone(camera_id: int) -> dict[str, object]:
-    """Remove the barrier check zone for a camera."""
-    camera = db.get_camera(camera_id)
-    if camera is None:
-        raise HTTPException(status_code=404, detail=f"Camera {camera_id} not found")
-    db.replace_barrier_check_zone(None, camera_id=camera_id)
-    return {"status": "ok"}
 
 
 @app.get("/api/cameras/{camera_id}/preview")
@@ -589,7 +636,8 @@ def camera_preview_meta(camera_id: int) -> dict[str, object]:
         "last_plate": meta.get("last_plate") if isinstance(meta.get("last_plate"), str) else None,
         "last_decision": meta.get("last_decision") if isinstance(meta.get("last_decision"), str) else None,
         "zones": db.get_zones(include_disabled=True, camera_id=camera_id),
-        "barrier_zone": db.get_barrier_check_zone(camera_id),
+        "barriers": db.list_barriers(),
+        "barrier_zones": db.get_barrier_check_zones_for_camera(camera_id),
         "max_zones": cfg.detection_zones_max,
         "image_url": f"/api/cameras/{camera_id}/preview/image" if available else None,
         "version": captured_at if isinstance(captured_at, str) else None,
