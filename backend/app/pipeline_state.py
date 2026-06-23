@@ -6,11 +6,15 @@ function signatures and improve state consistency.
 
 from __future__ import annotations
 
+import logging
 import time
 from dataclasses import dataclass, field
+from typing import Any
 
 from .barrier import BarrierController
 from .runtime_state import ZoneRuntimeState
+
+LOG = logging.getLogger(__name__)
 
 
 @dataclass
@@ -24,6 +28,7 @@ class PipelineState:
     zone_states: dict[int | None, ZoneRuntimeState] = field(default_factory=dict)
     last_preview_write_ts: float = 0.0
     last_no_zone_warning_ts: float = 0.0
+    prev_frame: Any = None  # np.ndarray | None — kept for motion detection
     # Suppress repeated deny/observed events for same plate+zone
     _deny_ts: dict[tuple[str, int | None], float] = field(default_factory=dict)
     _observed_ts: dict[tuple[str, int | None], float] = field(default_factory=dict)
@@ -54,24 +59,32 @@ class PipelineState:
     def mark_zone_event(self, zone_id: int | None) -> None:
         self._zone_cooldown_ts[zone_id] = time.monotonic()
 
-    def close_all_zones(self, barrier: BarrierController) -> None:
-        """Close all currently open zones.
+    def close_all_zones(self, barrier: BarrierController, open_only: bool = False) -> None:
+        """Close all currently open zones whose deadline has expired.
+
+        When open_only=True (BARRIER_OPEN_ONLY mode), skips the close command
+        entirely — the barrier's own auto-close timer handles closing. This
+        prevents command competition with a guard's manual remote on
+        toggle/impulse barriers where open and close are the same pulse.
 
         Deduplicates close commands by entity_id so that multiple zones mapped
-        to the same toggle/impulse button (e.g. KNX) only send one press.
-
-        Args:
-            barrier: BarrierController instance to send close commands.
+        to the same toggle/impulse button only send one press.
         """
-        import logging
-        LOG = logging.getLogger(__name__)
-
         now_monotonic = time.monotonic()
         closed_entities: set[str] = set()
 
         for zone_id, state in self.zone_states.items():
             deadline = state.close_deadline_monotonic
             if deadline is None or now_monotonic < deadline:
+                continue
+
+            if open_only:
+                LOG.info(
+                    "Barrier close skipped (open_only mode) plate=%s zone=%s",
+                    state.last_plate,
+                    zone_id if zone_id is not None else "full",
+                )
+                state.clear()
                 continue
 
             entity_id = (

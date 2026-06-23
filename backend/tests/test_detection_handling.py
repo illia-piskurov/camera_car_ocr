@@ -3,6 +3,7 @@ from __future__ import annotations
 from types import SimpleNamespace
 
 from app import orchestrator
+from app.pipeline_state import PipelineState
 
 from conftest import make_detection
 
@@ -30,7 +31,7 @@ def test_handle_detections_records_only_observed_without_decision(monkeypatch) -
         db=SimpleNamespace(),
         cfg=SimpleNamespace(),
         barrier=SimpleNamespace(),
-        zone_states={},
+        state=PipelineState.create_initial(),
     )
 
     assert result.frame_last_decision is None
@@ -68,7 +69,7 @@ def test_handle_detections_records_final_open_and_calls_barrier(monkeypatch) -> 
         db=SimpleNamespace(),
         cfg=SimpleNamespace(),
         barrier=SimpleNamespace(),
-        zone_states={},
+        state=PipelineState.create_initial(),
     )
 
     assert result.frame_last_decision == "open"

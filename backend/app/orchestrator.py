@@ -17,6 +17,7 @@ from .camera import SnapshotCameraClient
 from .config import Settings
 from .db import Database
 from .logging_utils import configure_logging
+from .motion_detector import has_motion_in_zone
 from .onec_provider import WhitelistProvider, create_whitelist_provider
 from .pipeline_state import PipelineState
 from .preview_pipeline import write_preview_artifacts, write_recognition_snapshot
@@ -299,6 +300,47 @@ def _refresh_zone_hold(
         )
 
 
+def _refresh_zone_hold_motion(
+    *,
+    prev_frame: np.ndarray,
+    curr_frame: np.ndarray,
+    active_zones_by_id: dict[int, dict[str, object]],
+    cfg: Settings,
+    state: PipelineState,
+    now_monotonic: float,
+) -> None:
+    """Extend zone hold while motion is detected in the zone area.
+
+    Keeps the barrier open when a vehicle is present but its plate is not
+    readable (bad angle, dirt, motion blur). Only acts on already-open zones.
+    """
+    for zone_id, zone_state in state.zone_states.items():
+        if not zone_state.is_open:
+            continue
+        if zone_id is None:
+            continue
+        zone = active_zones_by_id.get(zone_id)
+        if zone is None:
+            continue
+        if has_motion_in_zone(
+            prev_frame,
+            curr_frame,
+            zone,
+            threshold=cfg.motion_hold_threshold,
+        ):
+            close_delay = max(0.1, cfg.get_zone_close_delay_sec(zone_id))
+            zone_state.refresh_hold(
+                plate=zone_state.last_plate,
+                now_monotonic=now_monotonic,
+                close_delay_sec=close_delay,
+            )
+            LOG.debug(
+                "Motion hold: zone=%s deadline extended to %.1f",
+                zone_id,
+                zone_state.close_deadline_monotonic,
+            )
+
+
 def _snapshot_stage(
     *,
     cfg: Settings,
@@ -471,7 +513,8 @@ def _poll_single_camera(
     # Fetch frame
     frame = camera.fetch_frame()
     if frame is None:
-        state.close_all_zones(barrier)
+        state.prev_frame = None
+        state.close_all_zones(barrier, open_only=cfg.barrier_open_only)
         return
 
     # Process frame (zone filtering)
@@ -483,7 +526,7 @@ def _poll_single_camera(
         state=state,
     )
     if stage is None:
-        state.close_all_zones(barrier)
+        state.close_all_zones(barrier, open_only=cfg.barrier_open_only)
         return
 
     # Detect plates in zones using single-shot detection
@@ -521,13 +564,24 @@ def _poll_single_camera(
     )
 
     # Manage zone hold times
+    now_monotonic = time.monotonic()
     _refresh_zone_hold(
         detections=detections,
         cfg=cfg,
         state=state,
-        now_monotonic=time.monotonic(),
+        now_monotonic=now_monotonic,
     )
-    state.close_all_zones(barrier)
+    if cfg.motion_hold_enabled and state.prev_frame is not None and stage.active_zones_by_id:
+        _refresh_zone_hold_motion(
+            prev_frame=state.prev_frame,
+            curr_frame=frame,
+            active_zones_by_id=stage.active_zones_by_id,
+            cfg=cfg,
+            state=state,
+            now_monotonic=now_monotonic,
+        )
+    state.prev_frame = frame
+    state.close_all_zones(barrier, open_only=cfg.barrier_open_only)
 
     # Generate artifacts (snapshots and preview)
     _snapshot_stage(

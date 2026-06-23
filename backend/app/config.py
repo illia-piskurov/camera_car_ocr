@@ -72,6 +72,9 @@ class Settings:
     barrier_request_retries: int = 2
     barrier_verify_tls: bool = True
     barrier_close_delay_sec: float = 5.0
+    # open_only: system sends only open commands; barrier's own auto-close timer handles closing.
+    # Prevents command competition with a guard's manual remote on toggle/impulse barriers.
+    barrier_open_only: bool = False
     log_file_path: str = "data/logs/backend.log"
 
     db_path: str = "data/app.db"
@@ -100,6 +103,8 @@ class Settings:
     detection_zones_max: int = 2
     alpr_detector_providers: str = ""
     alpr_ocr_providers: str = ""
+    motion_hold_enabled: bool = True
+    motion_hold_threshold: float = 0.02
 
     def is_ha_configured(self) -> bool:
         return bool(self.barrier_ha_base_url and self.barrier_ha_token)
@@ -167,6 +172,7 @@ class Settings:
             barrier_close_delay_sec=float(
                 os.getenv("BARRIER_CLOSE_DELAY_SEC", Settings.barrier_close_delay_sec)
             ),
+            barrier_open_only=os.getenv("BARRIER_OPEN_ONLY", "0") in {"1", "true", "True"},
             log_file_path=os.getenv("LOG_FILE_PATH", Settings.log_file_path),
             db_path=os.getenv("DB_PATH", Settings.db_path),
             onec_sync_interval_hours=float(
@@ -208,4 +214,6 @@ class Settings:
             detection_zones_max=int(os.getenv("DETECTION_ZONES_MAX", Settings.detection_zones_max)),
             alpr_detector_providers=os.getenv("ALPR_DETECTOR_PROVIDERS", Settings.alpr_detector_providers),
             alpr_ocr_providers=os.getenv("ALPR_OCR_PROVIDERS", Settings.alpr_ocr_providers),
+            motion_hold_enabled=os.getenv("MOTION_HOLD_ENABLED", "1") in {"1", "true", "True"},
+            motion_hold_threshold=float(os.getenv("MOTION_HOLD_THRESHOLD", Settings.motion_hold_threshold)),
         )
