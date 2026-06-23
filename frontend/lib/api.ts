@@ -8,6 +8,7 @@ import type {
     CameraUpdatePayload,
     EventsPage,
     ForceSyncResult,
+    MotionZone,
     PeerZone,
     PreviewData,
     SaveZonesResponse,
@@ -401,6 +402,51 @@ export async function applyBarrierCalibration(barrierId: number): Promise<{
         n_closed: number
         n_total_labeled: number
     }
+}
+
+export async function listMotionZones(cameraId: number): Promise<MotionZone[]> {
+    const response = await fetch(`${API_BASE}/api/cameras/${cameraId}/motion-zones`, { cache: "no-store" })
+    if (!response.ok) throw new Error(`List motion zones failed: ${response.status}`)
+    const data = (await response.json()) as { motion_zones: MotionZone[] }
+    return data.motion_zones
+}
+
+export async function createMotionZone(
+    cameraId: number,
+    payload: { barrier_id: number | null; name?: string; x_min: number; y_min: number; x_max: number; y_max: number },
+): Promise<MotionZone> {
+    const response = await fetch(`${API_BASE}/api/cameras/${cameraId}/motion-zones`, {
+        method: "POST",
+        cache: "no-store",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+    })
+    if (!response.ok) throw new Error(`Create motion zone failed: ${response.status}`)
+    const data = (await response.json()) as { zone: MotionZone }
+    return data.zone
+}
+
+export async function updateMotionZone(
+    zoneId: number,
+    payload: { barrier_id: number | null; camera_id?: number | null; name?: string; x_min: number; y_min: number; x_max: number; y_max: number },
+): Promise<MotionZone> {
+    const response = await fetch(`${API_BASE}/api/motion-zones/${zoneId}`, {
+        method: "PUT",
+        cache: "no-store",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+    })
+    if (!response.ok) throw new Error(`Update motion zone failed: ${response.status}`)
+    const data = (await response.json()) as { zone: MotionZone }
+    return data.zone
+}
+
+export async function deleteMotionZone(zoneId: number): Promise<void> {
+    const response = await fetch(`${API_BASE}/api/motion-zones/${zoneId}`, {
+        method: "DELETE",
+        cache: "no-store",
+    })
+    if (!response.ok) throw new Error(`Delete motion zone failed: ${response.status}`)
 }
 
 export async function clearBarrierCalibration(barrierId: number): Promise<void> {

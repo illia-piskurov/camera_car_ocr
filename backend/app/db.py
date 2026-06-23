@@ -461,13 +461,67 @@ class Database:
             )
             session.commit()
 
+    # ----------------------------------------------------------------- barrier motion zones
+
+    def get_barrier_motion_zones_for_camera(self, camera_id: int | None) -> list[dict[str, object]]:
+        with self.SessionLocal() as session:
+            stmt = select(DetectionZone).where(DetectionZone.zone_type == "barrier_motion")
+            if camera_id is not None:
+                stmt = stmt.where(DetectionZone.camera_id == camera_id)
+            else:
+                stmt = stmt.where(DetectionZone.camera_id.is_(None))
+            rows = session.execute(stmt).scalars().all()
+            return [self._zone_row(row) for row in rows]
+
+    def save_barrier_motion_zone(self, zone: dict[str, object]) -> dict[str, object]:
+        """Create or update a barrier motion zone. Pass id to update, omit to create."""
+        with self.SessionLocal() as session:
+            zone_id = zone.get("id")
+            if zone_id is not None:
+                row = session.get(DetectionZone, int(zone_id))
+            else:
+                row = None
+
+            if row is None:
+                row = DetectionZone(zone_type="barrier_motion")
+                session.add(row)
+
+            raw_bid = zone.get("barrier_id")
+            row.barrier_id = int(raw_bid) if raw_bid is not None else None
+            raw_cam = zone.get("camera_id")
+            row.camera_id = int(raw_cam) if raw_cam is not None else None
+            row.name = str(zone.get("name") or "Motion Zone")
+            row.x_min = float(zone.get("x_min", 0.0))
+            row.y_min = float(zone.get("y_min", 0.0))
+            row.x_max = float(zone.get("x_max", 1.0))
+            row.y_max = float(zone.get("y_max", 1.0))
+            row.is_enabled = True
+            row.sort_order = 0
+            row.ha_open_entity_id = ""
+            row.ha_close_entity_id = ""
+            row.cross_camera_enabled = False
+            row.cross_zone_id = None
+            row.updated_at = utc_now()
+            session.commit()
+            session.refresh(row)
+            return self._zone_row(row)
+
+    def delete_barrier_motion_zone(self, zone_id: int) -> bool:
+        with self.SessionLocal() as session:
+            row = session.get(DetectionZone, zone_id)
+            if row is None or row.zone_type != "barrier_motion":
+                return False
+            session.delete(row)
+            session.commit()
+            return True
+
     def delete_barrier(self, barrier_id: int) -> bool:
         with self.SessionLocal() as session:
             row = session.get(Barrier, barrier_id)
             if row is None:
                 return False
             session.execute(
-                text("DELETE FROM detection_zones WHERE zone_type='barrier_check' AND barrier_id=:bid"),
+                text("DELETE FROM detection_zones WHERE zone_type IN ('barrier_check', 'barrier_motion') AND barrier_id=:bid"),
                 {"bid": barrier_id},
             )
             session.delete(row)

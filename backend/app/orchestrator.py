@@ -316,10 +316,10 @@ def _refresh_zone_hold_motion(
     state: PipelineState,
     now_monotonic: float,
 ) -> None:
-    """Extend zone hold while motion is detected in the zone area.
+    """Extend zone hold while motion is detected in the OCR zone area (fallback).
 
-    Keeps the barrier open when a vehicle is present but its plate is not
-    readable (bad angle, dirt, motion blur). Only acts on already-open zones.
+    Used when no dedicated barrier motion zones are configured.
+    Only acts on already-open zones.
     """
     for zone_id, zone_state in state.zone_states.items():
         if not zone_state.is_open:
@@ -342,7 +342,57 @@ def _refresh_zone_hold_motion(
                 close_delay_sec=close_delay,
             )
             LOG.debug(
-                "Motion hold: zone=%s deadline extended to %.1f",
+                "Motion hold (ocr-zone): zone=%s deadline extended to %.1f",
+                zone_id,
+                zone_state.close_deadline_monotonic,
+            )
+
+
+def _refresh_zone_hold_motion_barriers(
+    *,
+    prev_frame: np.ndarray,
+    curr_frame: np.ndarray,
+    barrier_motion_zones: list[dict[str, object]],
+    zone_barrier_ids: dict[int | None, int | None],
+    cfg: Settings,
+    state: PipelineState,
+    now_monotonic: float,
+) -> None:
+    """Extend hold for all open zones of a barrier when motion is detected in any of its motion zones.
+
+    This allows separate motion zones (e.g. covering the passage area) to keep the
+    barrier open while a vehicle is passing through, regardless of OCR zone coverage.
+    """
+    # Build reverse map: barrier_id → set of zone_ids that belong to it
+    barrier_to_zones: dict[int, list[int]] = {}
+    for zone_id, bid in zone_barrier_ids.items():
+        if zone_id is None or bid is None:
+            continue
+        barrier_to_zones.setdefault(bid, []).append(zone_id)
+
+    for mz in barrier_motion_zones:
+        bid = mz.get("barrier_id")
+        if bid is None:
+            continue
+        bid = int(bid)
+
+        if not has_motion_in_zone(prev_frame, curr_frame, mz, threshold=cfg.motion_hold_threshold):
+            continue
+
+        # Motion detected — extend hold for all open zones of this barrier
+        for zone_id in barrier_to_zones.get(bid, []):
+            zone_state = state.zone_states.get(zone_id)
+            if zone_state is None or not zone_state.is_open:
+                continue
+            close_delay = max(0.1, cfg.get_zone_close_delay_sec(zone_id))
+            zone_state.refresh_hold(
+                plate=zone_state.last_plate,
+                now_monotonic=now_monotonic,
+                close_delay_sec=close_delay,
+            )
+            LOG.debug(
+                "Motion hold (motion-zone): barrier=%s zone=%s deadline extended to %.1f",
+                bid,
                 zone_id,
                 zone_state.close_deadline_monotonic,
             )
@@ -668,15 +718,29 @@ def _poll_single_camera(
         state=state,
         now_monotonic=now_monotonic,
     )
-    if cfg.motion_hold_enabled and state.prev_frame is not None and stage.active_zones_by_id:
-        _refresh_zone_hold_motion(
-            prev_frame=state.prev_frame,
-            curr_frame=frame,
-            active_zones_by_id=stage.active_zones_by_id,
-            cfg=cfg,
-            state=state,
-            now_monotonic=now_monotonic,
-        )
+    if cfg.motion_hold_enabled and state.prev_frame is not None:
+        barrier_motion_zones = db.get_barrier_motion_zones_for_camera(camera_id)
+        if barrier_motion_zones:
+            # Use dedicated barrier motion zones → ignore OCR-zone motion
+            _refresh_zone_hold_motion_barriers(
+                prev_frame=state.prev_frame,
+                curr_frame=frame,
+                barrier_motion_zones=barrier_motion_zones,
+                zone_barrier_ids=zone_barrier_ids,
+                cfg=cfg,
+                state=state,
+                now_monotonic=now_monotonic,
+            )
+        elif stage.active_zones_by_id:
+            # Fallback: check motion in OCR zones themselves
+            _refresh_zone_hold_motion(
+                prev_frame=state.prev_frame,
+                curr_frame=frame,
+                active_zones_by_id=stage.active_zones_by_id,
+                cfg=cfg,
+                state=state,
+                now_monotonic=now_monotonic,
+            )
     state.prev_frame = frame
     state.close_all_zones(
         barrier,

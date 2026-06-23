@@ -12,9 +12,9 @@ import { ZonesPanel } from "@/components/ZonesPanel"
 import { BarriersPanel } from "@/components/BarriersPanel"
 import { EventsTable } from "@/components/EventsTable"
 import { OnboardingPanel } from "@/components/OnboardingPanel"
-import { deleteCamera, saveBarrierCheckZone, deleteBarrierCheckZone, saveZones, saveCameraZones, toEventImageSrc, updateCamera } from "@/lib/api"
+import { deleteCamera, saveBarrierCheckZone, deleteBarrierCheckZone, saveZones, saveCameraZones, toEventImageSrc, updateCamera, createMotionZone, updateMotionZone, deleteMotionZone } from "@/lib/api"
 import { useDashboard } from "@/hooks/use-dashboard"
-import type { Barrier, BarrierZone, Camera, DetectionZone } from "@/lib/types"
+import type { Barrier, BarrierZone, Camera, DetectionZone, MotionZone } from "@/lib/types"
 
 function formatTime(value: string | null | undefined) {
   if (!value) {
@@ -42,6 +42,14 @@ export default function Page() {
   const [zonesDirty, setZonesDirty] = useState(false)
   const [zonesSaving, setZonesSaving] = useState(false)
   const [zonesMessage, setZonesMessage] = useState<string | null>(null)
+
+  // Motion zone state
+  const [activeMotionZone, setActiveMotionZone] = useState<MotionZone | null>(null)
+  const [activeMotionZoneSaved, setActiveMotionZoneSaved] = useState<MotionZone | null>(null)
+  const [activeMotionZoneBarrierId, setActiveMotionZoneBarrierId] = useState<number | null>(null)
+  const [activeMotionZoneDirty, setActiveMotionZoneDirty] = useState(false)
+  const [activeMotionZoneSaving, setActiveMotionZoneSaving] = useState(false)
+  const [activeMotionZoneMessage, setActiveMotionZoneMessage] = useState<string | null>(null)
 
   // Per-barrier check zone state
   const [activeCheckBarrierId, setActiveCheckBarrierId] = useState<number | null>(null)
@@ -79,6 +87,11 @@ export default function Page() {
     setActiveCheckZoneDraft(null)
     setActiveCheckZoneDirty(false)
     setActiveCheckZoneMessage(null)
+    setActiveMotionZone(null)
+    setActiveMotionZoneSaved(null)
+    setActiveMotionZoneBarrierId(null)
+    setActiveMotionZoneDirty(false)
+    setActiveMotionZoneMessage(null)
   }, [selectedCameraId])
 
   useEffect(() => {
@@ -335,6 +348,98 @@ export default function Page() {
     setActiveCheckZoneMessage(null)
   }
 
+  // Motion zone handlers
+  const motionZones: MotionZone[] = preview?.barrier_motion_zones ?? []
+
+  function handleSelectMotionZone(zone: MotionZone | null) {
+    setActiveMotionZone(zone)
+    setActiveMotionZoneSaved(zone)
+    setActiveMotionZoneBarrierId(zone?.barrier_id ?? null)
+    setActiveMotionZoneDirty(false)
+    setActiveMotionZoneMessage(null)
+  }
+
+  function handleSelectMotionBarrier(barrierId: number | null) {
+    setActiveMotionZoneBarrierId(barrierId)
+    setActiveMotionZoneDirty(true)
+    if (activeMotionZone) setActiveMotionZone({ ...activeMotionZone, barrier_id: barrierId })
+  }
+
+  function handleAddMotionZone() {
+    const draft: MotionZone = {
+      id: -1,
+      barrier_id: null,
+      camera_id: selectedCameraId,
+      x_min: 0.2, y_min: 0.2, x_max: 0.8, y_max: 0.8,
+      zone_type: "barrier_motion",
+    }
+    setActiveMotionZone(draft)
+    setActiveMotionZoneSaved(null)
+    setActiveMotionZoneBarrierId(null)
+    setActiveMotionZoneDirty(true)
+    setActiveMotionZoneMessage(null)
+  }
+
+  function handleChangeActiveMotionZone(zone: MotionZone) {
+    setActiveMotionZone(zone)
+    setActiveMotionZoneDirty(true)
+  }
+
+  async function handleSaveMotionZone() {
+    if (!activeMotionZone || selectedCameraId === null) return
+    setActiveMotionZoneSaving(true)
+    setActiveMotionZoneMessage(null)
+    try {
+      const payload = {
+        barrier_id: activeMotionZoneBarrierId,
+        camera_id: selectedCameraId,
+        name: activeMotionZone.name || "Motion Zone",
+        x_min: activeMotionZone.x_min,
+        y_min: activeMotionZone.y_min,
+        x_max: activeMotionZone.x_max,
+        y_max: activeMotionZone.y_max,
+      }
+      let saved: MotionZone
+      if (activeMotionZone.id === -1) {
+        saved = await createMotionZone(selectedCameraId, payload)
+      } else {
+        saved = await updateMotionZone(activeMotionZone.id, payload)
+      }
+      setActiveMotionZone(saved)
+      setActiveMotionZoneSaved(saved)
+      setActiveMotionZoneDirty(false)
+      setActiveMotionZoneMessage("Motion zone saved")
+      await refresh()
+    } catch (err) {
+      setActiveMotionZoneMessage(err instanceof Error ? err.message : "Failed to save motion zone")
+    } finally {
+      setActiveMotionZoneSaving(false)
+    }
+  }
+
+  async function handleDeleteMotionZone(zoneId: number) {
+    setActiveMotionZoneMessage(null)
+    try {
+      await deleteMotionZone(zoneId)
+      if (activeMotionZone?.id === zoneId) {
+        setActiveMotionZone(null)
+        setActiveMotionZoneSaved(null)
+        setActiveMotionZoneBarrierId(null)
+        setActiveMotionZoneDirty(false)
+      }
+      setActiveMotionZoneMessage("Motion zone deleted")
+      await refresh()
+    } catch (err) {
+      setActiveMotionZoneMessage(err instanceof Error ? err.message : "Failed to delete motion zone")
+    }
+  }
+
+  function handleResetMotionZone() {
+    setActiveMotionZone(activeMotionZoneSaved)
+    setActiveMotionZoneDirty(false)
+    setActiveMotionZoneMessage(null)
+  }
+
   return (
     <main className="min-h-svh bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900 text-slate-100">
       <ControlRoomHeader
@@ -388,6 +493,9 @@ export default function Page() {
               barrierZones={otherBarrierZones}
               activeBarrierZone={activeCheckZoneDraft}
               onChangeActiveBarrierZone={handleChangeActiveBarrierZone}
+              motionZones={motionZones}
+              activeMotionZone={activeMotionZone}
+              onChangeActiveMotionZone={handleChangeActiveMotionZone}
               headerAction={
                 selectedCamera ? (
                   <button
@@ -440,6 +548,18 @@ export default function Page() {
               onSaveCheckZone={() => void handleSaveCheckZone()}
               onDeleteCheckZone={() => void handleDeleteCheckZone()}
               onResetCheckZone={handleResetCheckZone}
+              motionZones={motionZones}
+              activeMotionZone={activeMotionZone}
+              activeMotionZoneBarrierId={activeMotionZoneBarrierId}
+              activeMotionZoneDirty={activeMotionZoneDirty}
+              activeMotionZoneSaving={activeMotionZoneSaving}
+              activeMotionZoneMessage={activeMotionZoneMessage}
+              onSelectMotionZone={handleSelectMotionZone}
+              onSelectMotionBarrier={handleSelectMotionBarrier}
+              onAddMotionZone={handleAddMotionZone}
+              onSaveMotionZone={() => void handleSaveMotionZone()}
+              onDeleteMotionZone={(id) => void handleDeleteMotionZone(id)}
+              onResetMotionZone={handleResetMotionZone}
             />
           </div>
         </section>

@@ -2,7 +2,7 @@
 
 import type { ReactNode } from "react"
 import { useMemo, useRef, useState } from "react"
-import type { BarrierZone, DetectionZone } from "@/lib/types"
+import type { BarrierZone, DetectionZone, MotionZone } from "@/lib/types"
 
 type PreviewWithZonesProps = {
     imageSrc: string | null
@@ -11,39 +11,51 @@ type PreviewWithZonesProps = {
     barrierZones?: BarrierZone[]
     activeBarrierZone?: BarrierZone | null
     onChangeActiveBarrierZone?: (zone: BarrierZone) => void
+    motionZones?: MotionZone[]
+    activeMotionZone?: MotionZone | null
+    onChangeActiveMotionZone?: (zone: MotionZone) => void
     headerAction?: ReactNode
 }
 
 function zoneLabel(zone: DetectionZone, index: number): string {
     const explicitName = (zone.name ?? "").trim()
-    if (explicitName) {
-        return explicitName
-    }
-
+    if (explicitName) return explicitName
     const openEntity = (zone.ha_open_entity_id ?? "").trim()
-    if (openEntity) {
-        return openEntity
-    }
-
+    if (openEntity) return openEntity
     const closeEntity = (zone.ha_close_entity_id ?? "").trim()
-    if (closeEntity) {
-        return closeEntity
-    }
-
+    if (closeEntity) return closeEntity
     return `Zone ${index + 1}`
 }
 
-type ResizingZone = {
-    zoneIndex: number
-    corner: "tl" | "tr" | "bl" | "br"
-}
-
-type ResizingBarrier = {
-    corner: "tl" | "tr" | "bl" | "br"
-}
+type ResizingZone = { zoneIndex: number; corner: "tl" | "tr" | "bl" | "br" }
+type ResizingBarrier = { corner: "tl" | "tr" | "bl" | "br" }
+type ResizingMotion = { corner: "tl" | "tr" | "bl" | "br" }
 
 function clamp01(value: number): number {
     return Math.max(0, Math.min(1, value))
+}
+
+function CornerHandle({
+    corner,
+    color,
+    onPointerDown,
+}: {
+    corner: "tl" | "tr" | "bl" | "br"
+    color: string
+    onPointerDown: (e: React.PointerEvent<HTMLDivElement>) => void
+}) {
+    const posClass = {
+        tl: "absolute -top-2 -left-2 cursor-nwse-resize",
+        tr: "absolute -top-2 -right-2 cursor-nesw-resize",
+        bl: "absolute -bottom-2 -left-2 cursor-nesw-resize",
+        br: "absolute -bottom-2 -right-2 cursor-nwse-resize",
+    }[corner]
+    return (
+        <div
+            className={`${posClass} size-4 rounded-full border ${color}`}
+            onPointerDown={onPointerDown}
+        />
+    )
 }
 
 export function PreviewWithZones({
@@ -53,92 +65,63 @@ export function PreviewWithZones({
     barrierZones,
     activeBarrierZone,
     onChangeActiveBarrierZone,
+    motionZones,
+    activeMotionZone,
+    onChangeActiveMotionZone,
     headerAction,
 }: PreviewWithZonesProps) {
     const overlayRef = useRef<HTMLDivElement | null>(null)
     const [resizing, setResizing] = useState<ResizingZone | null>(null)
     const [resizingBarrier, setResizingBarrier] = useState<ResizingBarrier | null>(null)
+    const [resizingMotion, setResizingMotion] = useState<ResizingMotion | null>(null)
 
-    const visibleZones = useMemo(() => {
-        return [...zones].sort((a, b) => a.sort_order - b.sort_order)
-    }, [zones])
+    const visibleZones = useMemo(
+        () => [...zones].sort((a, b) => a.sort_order - b.sort_order),
+        [zones],
+    )
 
     function pointToNormalized(clientX: number, clientY: number) {
         const el = overlayRef.current
         if (!el) return null
         const rect = el.getBoundingClientRect()
         if (rect.width <= 0 || rect.height <= 0) return null
-        const x = clamp01((clientX - rect.left) / rect.width)
-        const y = clamp01((clientY - rect.top) / rect.height)
-        return { x, y }
-    }
-
-    function handleCornerPointerDown(
-        event: React.PointerEvent<HTMLDivElement>,
-        zoneIndex: number,
-        corner: "tl" | "tr" | "bl" | "br"
-    ) {
-        event.stopPropagation()
-        setResizing({ zoneIndex, corner })
-    }
-
-    function handleBarrierCornerPointerDown(
-        event: React.PointerEvent<HTMLDivElement>,
-        corner: "tl" | "tr" | "bl" | "br"
-    ) {
-        event.stopPropagation()
-        setResizingBarrier({ corner })
+        return { x: clamp01((clientX - rect.left) / rect.width), y: clamp01((clientY - rect.top) / rect.height) }
     }
 
     function handlePointerMove(event: React.PointerEvent<HTMLDivElement>) {
+        const point = pointToNormalized(event.clientX, event.clientY)
+        if (!point) return
+
         if (resizing) {
-            const point = pointToNormalized(event.clientX, event.clientY)
-            if (!point) return
             const zone = zones[resizing.zoneIndex]
             if (!zone) return
-
-            let newZone = { ...zone }
-            if (resizing.corner === "tl") {
-                newZone.x_min = Math.min(point.x, zone.x_max - 0.02)
-                newZone.y_min = Math.min(point.y, zone.y_max - 0.02)
-            } else if (resizing.corner === "tr") {
-                newZone.x_max = Math.max(point.x, zone.x_min + 0.02)
-                newZone.y_min = Math.min(point.y, zone.y_max - 0.02)
-            } else if (resizing.corner === "bl") {
-                newZone.x_min = Math.min(point.x, zone.x_max - 0.02)
-                newZone.y_max = Math.max(point.y, zone.y_min + 0.02)
-            } else if (resizing.corner === "br") {
-                newZone.x_max = Math.max(point.x, zone.x_min + 0.02)
-                newZone.y_max = Math.max(point.y, zone.y_min + 0.02)
-            }
-
-            const updated = zones.map((z, i) => (i === resizing.zoneIndex ? newZone : z))
-            onChangeZones(updated)
+            const z = { ...zone }
+            if (resizing.corner === "tl") { z.x_min = Math.min(point.x, zone.x_max - 0.02); z.y_min = Math.min(point.y, zone.y_max - 0.02) }
+            else if (resizing.corner === "tr") { z.x_max = Math.max(point.x, zone.x_min + 0.02); z.y_min = Math.min(point.y, zone.y_max - 0.02) }
+            else if (resizing.corner === "bl") { z.x_min = Math.min(point.x, zone.x_max - 0.02); z.y_max = Math.max(point.y, zone.y_min + 0.02) }
+            else { z.x_max = Math.max(point.x, zone.x_min + 0.02); z.y_max = Math.max(point.y, zone.y_min + 0.02) }
+            onChangeZones(zones.map((z2, i) => (i === resizing.zoneIndex ? z : z2)))
         } else if (resizingBarrier && activeBarrierZone && onChangeActiveBarrierZone) {
-            const point = pointToNormalized(event.clientX, event.clientY)
-            if (!point) return
-
-            let bz = { ...activeBarrierZone }
-            if (resizingBarrier.corner === "tl") {
-                bz.x_min = Math.min(point.x, activeBarrierZone.x_max - 0.02)
-                bz.y_min = Math.min(point.y, activeBarrierZone.y_max - 0.02)
-            } else if (resizingBarrier.corner === "tr") {
-                bz.x_max = Math.max(point.x, activeBarrierZone.x_min + 0.02)
-                bz.y_min = Math.min(point.y, activeBarrierZone.y_max - 0.02)
-            } else if (resizingBarrier.corner === "bl") {
-                bz.x_min = Math.min(point.x, activeBarrierZone.x_max - 0.02)
-                bz.y_max = Math.max(point.y, activeBarrierZone.y_min + 0.02)
-            } else if (resizingBarrier.corner === "br") {
-                bz.x_max = Math.max(point.x, activeBarrierZone.x_min + 0.02)
-                bz.y_max = Math.max(point.y, activeBarrierZone.y_min + 0.02)
-            }
+            const bz = { ...activeBarrierZone }
+            if (resizingBarrier.corner === "tl") { bz.x_min = Math.min(point.x, activeBarrierZone.x_max - 0.02); bz.y_min = Math.min(point.y, activeBarrierZone.y_max - 0.02) }
+            else if (resizingBarrier.corner === "tr") { bz.x_max = Math.max(point.x, activeBarrierZone.x_min + 0.02); bz.y_min = Math.min(point.y, activeBarrierZone.y_max - 0.02) }
+            else if (resizingBarrier.corner === "bl") { bz.x_min = Math.min(point.x, activeBarrierZone.x_max - 0.02); bz.y_max = Math.max(point.y, activeBarrierZone.y_min + 0.02) }
+            else { bz.x_max = Math.max(point.x, activeBarrierZone.x_min + 0.02); bz.y_max = Math.max(point.y, activeBarrierZone.y_min + 0.02) }
             onChangeActiveBarrierZone(bz)
+        } else if (resizingMotion && activeMotionZone && onChangeActiveMotionZone) {
+            const mz = { ...activeMotionZone }
+            if (resizingMotion.corner === "tl") { mz.x_min = Math.min(point.x, activeMotionZone.x_max - 0.02); mz.y_min = Math.min(point.y, activeMotionZone.y_max - 0.02) }
+            else if (resizingMotion.corner === "tr") { mz.x_max = Math.max(point.x, activeMotionZone.x_min + 0.02); mz.y_min = Math.min(point.y, activeMotionZone.y_max - 0.02) }
+            else if (resizingMotion.corner === "bl") { mz.x_min = Math.min(point.x, activeMotionZone.x_max - 0.02); mz.y_max = Math.max(point.y, activeMotionZone.y_min + 0.02) }
+            else { mz.x_max = Math.max(point.x, activeMotionZone.x_min + 0.02); mz.y_max = Math.max(point.y, activeMotionZone.y_min + 0.02) }
+            onChangeActiveMotionZone(mz)
         }
     }
 
     function handlePointerUp() {
         setResizing(null)
         setResizingBarrier(null)
+        setResizingMotion(null)
     }
 
     return (
@@ -148,7 +131,6 @@ export function PreviewWithZones({
                 {headerAction && <div className="shrink-0">{headerAction}</div>}
             </div>
 
-            {/* Preview Image with Zones Overlay */}
             <div className="overflow-hidden rounded-lg border border-slate-700/80 bg-slate-900/60">
                 {imageSrc ? (
                     <div
@@ -159,69 +141,36 @@ export function PreviewWithZones({
                         onPointerLeave={handlePointerUp}
                     >
                         {/* eslint-disable-next-line @next/next/no-img-element */}
-                        <img
-                            src={imageSrc}
-                            alt="Live preview"
-                            className="h-auto w-full object-cover"
-                            draggable={false}
-                        />
+                        <img src={imageSrc} alt="Live preview" className="h-auto w-full object-cover" draggable={false} />
 
-                        {/* Render Zones with Resize Handles */}
-                        {visibleZones.map((zone, index) => {
-                            const left = `${zone.x_min * 100}%`
-                            const top = `${zone.y_min * 100}%`
-                            const width = `${(zone.x_max - zone.x_min) * 100}%`
-                            const height = `${(zone.y_max - zone.y_min) * 100}%`
+                        {/* OCR detection zones (blue/green, editable) */}
+                        {visibleZones.map((zone, index) => (
+                            <div
+                                key={`${zone.id}-${index}`}
+                                className={`absolute border-2 ${zone.is_enabled ? "border-emerald-400" : "border-zinc-500"}`}
+                                style={{
+                                    left: `${zone.x_min * 100}%`, top: `${zone.y_min * 100}%`,
+                                    width: `${(zone.x_max - zone.x_min) * 100}%`, height: `${(zone.y_max - zone.y_min) * 100}%`,
+                                }}
+                            >
+                                <span className="absolute -top-6 left-0 rounded bg-black/70 px-2 py-0.5 text-[10px] text-zinc-200">
+                                    {zoneLabel(zone, index)}
+                                </span>
+                                <CornerHandle corner="tl" color="border-blue-300/50 bg-blue-500/70 hover:bg-blue-400" onPointerDown={(e) => { e.stopPropagation(); setResizing({ zoneIndex: index, corner: "tl" }) }} />
+                                <CornerHandle corner="tr" color="border-blue-300/50 bg-blue-500/70 hover:bg-blue-400" onPointerDown={(e) => { e.stopPropagation(); setResizing({ zoneIndex: index, corner: "tr" }) }} />
+                                <CornerHandle corner="bl" color="border-blue-300/50 bg-blue-500/70 hover:bg-blue-400" onPointerDown={(e) => { e.stopPropagation(); setResizing({ zoneIndex: index, corner: "bl" }) }} />
+                                <CornerHandle corner="br" color="border-blue-300/50 bg-blue-500/70 hover:bg-blue-400" onPointerDown={(e) => { e.stopPropagation(); setResizing({ zoneIndex: index, corner: "br" }) }} />
+                            </div>
+                        ))}
 
-                            return (
-                                <div
-                                    key={`${zone.id}-${index}`}
-                                    className={`absolute border-2 ${zone.is_enabled ? "border-emerald-400" : "border-zinc-500"
-                                        }`}
-                                    style={{ left, top, width, height }}
-                                >
-                                    {/* Zone label */}
-                                    <span className="absolute -top-6 left-0 rounded bg-black/70 px-2 py-0.5 text-[10px] text-zinc-200">
-                                        {zoneLabel(zone, index)}
-                                    </span>
-
-                                    {/* Top-Left Corner Handle */}
-                                    <div
-                                        className="absolute -top-2 -left-2 size-4 cursor-nwse-resize rounded-full border border-blue-300/50 bg-blue-500/70 hover:bg-blue-400"
-                                        onPointerDown={(e) => handleCornerPointerDown(e, index, "tl")}
-                                    />
-
-                                    {/* Top-Right Corner Handle */}
-                                    <div
-                                        className="absolute -top-2 -right-2 size-4 cursor-nesw-resize rounded-full border border-blue-300/50 bg-blue-500/70 hover:bg-blue-400"
-                                        onPointerDown={(e) => handleCornerPointerDown(e, index, "tr")}
-                                    />
-
-                                    {/* Bottom-Left Corner Handle */}
-                                    <div
-                                        className="absolute -bottom-2 -left-2 size-4 cursor-nesw-resize rounded-full border border-blue-300/50 bg-blue-500/70 hover:bg-blue-400"
-                                        onPointerDown={(e) => handleCornerPointerDown(e, index, "bl")}
-                                    />
-
-                                    {/* Bottom-Right Corner Handle */}
-                                    <div
-                                        className="absolute -bottom-2 -right-2 size-4 cursor-nwse-resize rounded-full border border-blue-300/50 bg-blue-500/70 hover:bg-blue-400"
-                                        onPointerDown={(e) => handleCornerPointerDown(e, index, "br")}
-                                    />
-                                </div>
-                            )
-                        })}
-
-                        {/* Saved barrier check zones (read-only, no handles) */}
+                        {/* Saved barrier check zones (amber dashed, read-only) */}
                         {(barrierZones ?? []).map((bz, idx) => (
                             <div
                                 key={`bz-saved-${bz.id}-${idx}`}
                                 className="pointer-events-none absolute border-2 border-dashed border-amber-400/40"
                                 style={{
-                                    left: `${bz.x_min * 100}%`,
-                                    top: `${bz.y_min * 100}%`,
-                                    width: `${(bz.x_max - bz.x_min) * 100}%`,
-                                    height: `${(bz.y_max - bz.y_min) * 100}%`,
+                                    left: `${bz.x_min * 100}%`, top: `${bz.y_min * 100}%`,
+                                    width: `${(bz.x_max - bz.x_min) * 100}%`, height: `${(bz.y_max - bz.y_min) * 100}%`,
                                 }}
                             >
                                 <span className="absolute -top-6 left-0 rounded bg-black/70 px-2 py-0.5 text-[10px] text-amber-400/70">
@@ -230,37 +179,57 @@ export function PreviewWithZones({
                             </div>
                         ))}
 
-                        {/* Active barrier check zone (editable, with resize handles) */}
+                        {/* Active barrier check zone (amber solid, editable) */}
                         {activeBarrierZone && (
                             <div
                                 className="absolute border-2 border-dashed border-amber-400"
                                 style={{
-                                    left: `${activeBarrierZone.x_min * 100}%`,
-                                    top: `${activeBarrierZone.y_min * 100}%`,
-                                    width: `${(activeBarrierZone.x_max - activeBarrierZone.x_min) * 100}%`,
-                                    height: `${(activeBarrierZone.y_max - activeBarrierZone.y_min) * 100}%`,
+                                    left: `${activeBarrierZone.x_min * 100}%`, top: `${activeBarrierZone.y_min * 100}%`,
+                                    width: `${(activeBarrierZone.x_max - activeBarrierZone.x_min) * 100}%`, height: `${(activeBarrierZone.y_max - activeBarrierZone.y_min) * 100}%`,
                                 }}
                             >
                                 <span className="absolute -top-6 left-0 rounded bg-black/70 px-2 py-0.5 text-[10px] text-amber-300">
                                     {activeBarrierZone.name?.trim() || (activeBarrierZone.barrier_id != null ? `Barrier ${activeBarrierZone.barrier_id}` : "Barrier zone")}
                                 </span>
+                                <CornerHandle corner="tl" color="border-amber-300/50 bg-amber-500/70 hover:bg-amber-400" onPointerDown={(e) => { e.stopPropagation(); setResizingBarrier({ corner: "tl" }) }} />
+                                <CornerHandle corner="tr" color="border-amber-300/50 bg-amber-500/70 hover:bg-amber-400" onPointerDown={(e) => { e.stopPropagation(); setResizingBarrier({ corner: "tr" }) }} />
+                                <CornerHandle corner="bl" color="border-amber-300/50 bg-amber-500/70 hover:bg-amber-400" onPointerDown={(e) => { e.stopPropagation(); setResizingBarrier({ corner: "bl" }) }} />
+                                <CornerHandle corner="br" color="border-amber-300/50 bg-amber-500/70 hover:bg-amber-400" onPointerDown={(e) => { e.stopPropagation(); setResizingBarrier({ corner: "br" }) }} />
+                            </div>
+                        )}
 
-                                <div
-                                    className="absolute -top-2 -left-2 size-4 cursor-nwse-resize rounded-full border border-amber-300/50 bg-amber-500/70 hover:bg-amber-400"
-                                    onPointerDown={(e) => handleBarrierCornerPointerDown(e, "tl")}
-                                />
-                                <div
-                                    className="absolute -top-2 -right-2 size-4 cursor-nesw-resize rounded-full border border-amber-300/50 bg-amber-500/70 hover:bg-amber-400"
-                                    onPointerDown={(e) => handleBarrierCornerPointerDown(e, "tr")}
-                                />
-                                <div
-                                    className="absolute -bottom-2 -left-2 size-4 cursor-nesw-resize rounded-full border border-amber-300/50 bg-amber-500/70 hover:bg-amber-400"
-                                    onPointerDown={(e) => handleBarrierCornerPointerDown(e, "bl")}
-                                />
-                                <div
-                                    className="absolute -bottom-2 -right-2 size-4 cursor-nwse-resize rounded-full border border-amber-300/50 bg-amber-500/70 hover:bg-amber-400"
-                                    onPointerDown={(e) => handleBarrierCornerPointerDown(e, "br")}
-                                />
+                        {/* Saved motion zones (lime dashed, read-only) */}
+                        {(motionZones ?? []).filter(mz => mz.id !== activeMotionZone?.id).map((mz, idx) => (
+                            <div
+                                key={`mz-saved-${mz.id}-${idx}`}
+                                className="pointer-events-none absolute border-2 border-dashed border-lime-400/40"
+                                style={{
+                                    left: `${mz.x_min * 100}%`, top: `${mz.y_min * 100}%`,
+                                    width: `${(mz.x_max - mz.x_min) * 100}%`, height: `${(mz.y_max - mz.y_min) * 100}%`,
+                                }}
+                            >
+                                <span className="absolute -top-6 left-0 rounded bg-black/70 px-2 py-0.5 text-[10px] text-lime-400/70">
+                                    {mz.name?.trim() || (mz.barrier_id != null ? `Motion ${mz.barrier_id}` : "Motion zone")}
+                                </span>
+                            </div>
+                        ))}
+
+                        {/* Active motion zone (lime solid, editable) */}
+                        {activeMotionZone && (
+                            <div
+                                className="absolute border-2 border-dashed border-lime-400"
+                                style={{
+                                    left: `${activeMotionZone.x_min * 100}%`, top: `${activeMotionZone.y_min * 100}%`,
+                                    width: `${(activeMotionZone.x_max - activeMotionZone.x_min) * 100}%`, height: `${(activeMotionZone.y_max - activeMotionZone.y_min) * 100}%`,
+                                }}
+                            >
+                                <span className="absolute -top-6 left-0 rounded bg-black/70 px-2 py-0.5 text-[10px] text-lime-300">
+                                    {activeMotionZone.name?.trim() || (activeMotionZone.barrier_id != null ? `Motion ${activeMotionZone.barrier_id}` : "Motion zone")}
+                                </span>
+                                <CornerHandle corner="tl" color="border-lime-300/50 bg-lime-500/70 hover:bg-lime-400" onPointerDown={(e) => { e.stopPropagation(); setResizingMotion({ corner: "tl" }) }} />
+                                <CornerHandle corner="tr" color="border-lime-300/50 bg-lime-500/70 hover:bg-lime-400" onPointerDown={(e) => { e.stopPropagation(); setResizingMotion({ corner: "tr" }) }} />
+                                <CornerHandle corner="bl" color="border-lime-300/50 bg-lime-500/70 hover:bg-lime-400" onPointerDown={(e) => { e.stopPropagation(); setResizingMotion({ corner: "bl" }) }} />
+                                <CornerHandle corner="br" color="border-lime-300/50 bg-lime-500/70 hover:bg-lime-400" onPointerDown={(e) => { e.stopPropagation(); setResizingMotion({ corner: "br" }) }} />
                             </div>
                         )}
                     </div>

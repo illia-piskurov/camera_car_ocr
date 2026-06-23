@@ -106,6 +106,18 @@ export type BarrierZone = {
     zone_type: "barrier_check"
 }
 
+export type MotionZone = {
+    id: number
+    barrier_id: number | null
+    camera_id?: number | null
+    name?: string
+    x_min: number
+    y_min: number
+    x_max: number
+    y_max: number
+    zone_type: "barrier_motion"
+}
+
 export type PeerZone = {
     id: number
     camera_id: number
@@ -183,6 +195,7 @@ export type PreviewData = {
     zones: DetectionZone[]
     barriers: Barrier[]
     barrier_zones: BarrierZone[]
+    barrier_motion_zones: MotionZone[]
     max_zones: number
     image_url: string | null
     version: string | null

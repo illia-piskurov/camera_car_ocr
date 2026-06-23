@@ -839,6 +839,7 @@ def camera_preview_meta(camera_id: int) -> dict[str, object]:
         "zones": db.get_zones(include_disabled=True, camera_id=camera_id),
         "barriers": db.list_barriers(),
         "barrier_zones": db.get_barrier_check_zones_for_camera(camera_id),
+        "barrier_motion_zones": db.get_barrier_motion_zones_for_camera(camera_id),
         "max_zones": cfg.detection_zones_max,
         "image_url": f"/api/cameras/{camera_id}/preview/image" if available else None,
         "version": captured_at if isinstance(captured_at, str) else None,
@@ -873,3 +874,62 @@ def camera_preview_image(camera_id: int) -> StreamingResponse:
             "Content-Length": str(len(image_data)),
         },
     )
+
+
+# ----------------------------------------------------------------- barrier motion zones
+
+class MotionZoneInput(BaseModel):
+    barrier_id: int | None = None
+    camera_id: int | None = None
+    name: str | None = None
+    x_min: float
+    y_min: float
+    x_max: float
+    y_max: float
+
+
+@app.get("/api/cameras/{camera_id}/motion-zones")
+def list_motion_zones(camera_id: int) -> dict[str, object]:
+    if db.get_camera(camera_id) is None:
+        raise HTTPException(status_code=404, detail=f"Camera {camera_id} not found")
+    zones = db.get_barrier_motion_zones_for_camera(camera_id)
+    return {"motion_zones": zones}
+
+
+@app.post("/api/cameras/{camera_id}/motion-zones")
+def create_motion_zone(camera_id: int, payload: MotionZoneInput) -> dict[str, object]:
+    if db.get_camera(camera_id) is None:
+        raise HTTPException(status_code=404, detail=f"Camera {camera_id} not found")
+    zone = db.save_barrier_motion_zone({
+        "barrier_id": payload.barrier_id,
+        "camera_id": camera_id,
+        "name": payload.name or "Motion Zone",
+        "x_min": payload.x_min,
+        "y_min": payload.y_min,
+        "x_max": payload.x_max,
+        "y_max": payload.y_max,
+    })
+    return {"zone": zone}
+
+
+@app.put("/api/motion-zones/{zone_id}")
+def update_motion_zone(zone_id: int, payload: MotionZoneInput) -> dict[str, object]:
+    zone = db.save_barrier_motion_zone({
+        "id": zone_id,
+        "barrier_id": payload.barrier_id,
+        "camera_id": payload.camera_id,
+        "name": payload.name or "Motion Zone",
+        "x_min": payload.x_min,
+        "y_min": payload.y_min,
+        "x_max": payload.x_max,
+        "y_max": payload.y_max,
+    })
+    return {"zone": zone}
+
+
+@app.delete("/api/motion-zones/{zone_id}")
+def delete_motion_zone(zone_id: int) -> dict[str, object]:
+    ok = db.delete_barrier_motion_zone(zone_id)
+    if not ok:
+        raise HTTPException(status_code=404, detail=f"Motion zone {zone_id} not found")
+    return {"status": "deleted"}
