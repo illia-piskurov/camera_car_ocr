@@ -226,7 +226,9 @@ export function PreviewWithZones({
 
     // Convert corners to SVG polygon points string
     function cornersToPoints(corners: {x: number, y: number}[]): string {
-        return corners.map(c => `${(c.x * 100).toFixed(2)}% ${(c.y * 100).toFixed(2)}%`).join(" ")
+        // Use coordinates 0-100 for viewBox
+        const points = [...corners, corners[0]]
+        return points.map(c => `${(c.x * 100).toFixed(1)} ${(c.y * 100).toFixed(1)}`).join(" ")
     }
 
     return (
@@ -277,13 +279,13 @@ export function PreviewWithZones({
                                 // Rotated zone - render as SVG polygon
                                 const corners = getRotatedRectCorners(bz.x_min, bz.y_min, bz.x_max, bz.y_max, rotation)
                                 return (
-                                    <svg key={`bz-saved-${bz.id}-${idx}`} className="pointer-events-none absolute inset-0 h-full w-full">
+                                    <svg key={`bz-saved-${bz.id}-${idx}`} className="pointer-events-none absolute inset-0 h-full w-full" viewBox="0 0 100 100" preserveAspectRatio="none">
                                         <polygon
                                             points={cornersToPoints(corners)}
                                             fill="none"
                                             stroke="rgba(251, 191, 36, 0.4)"
-                                            strokeWidth="2"
-                                            strokeDasharray="5,5"
+                                            strokeWidth="1.5"
+                                            strokeDasharray="2,2"
                                         />
                                     </svg>
                                 )
@@ -327,23 +329,23 @@ export function PreviewWithZones({
                                 // Rotated zone - render as SVG polygon
                                 return (
                                     <>
-                                        <svg className="pointer-events-none absolute inset-0 h-full w-full z-10">
+                                        <svg className="pointer-events-none absolute inset-0 h-full w-full z-10" viewBox="0 0 100 100" preserveAspectRatio="none">
                                             <polygon
                                                 points={cornersToPoints(corners)}
                                                 fill="none"
                                                 stroke="rgb(251, 191, 36)"
-                                                strokeWidth="2"
-                                                strokeDasharray="5,5"
+                                                strokeWidth="1.5"
+                                                strokeDasharray="2,2"
                                             />
                                             {/* Line from zone center to rotation handle */}
                                             <line
-                                                x1={`${((activeBarrierZone.x_min + activeBarrierZone.x_max) / 2) * 100}%`}
-                                                y1={`${((activeBarrierZone.y_min + activeBarrierZone.y_max) / 2) * 100}%`}
-                                                x2={`${handlePos.x * 100}%`}
-                                                y2={`${handlePos.y * 100}%`}
+                                                x1={(((activeBarrierZone.x_min + activeBarrierZone.x_max) / 2) * 100).toFixed(1)}
+                                                y1={(((activeBarrierZone.y_min + activeBarrierZone.y_max) / 2) * 100).toFixed(1)}
+                                                x2={(handlePos.x * 100).toFixed(1)}
+                                                y2={(handlePos.y * 100).toFixed(1)}
                                                 stroke="rgb(251, 191, 36)"
-                                                strokeWidth="1"
-                                                strokeDasharray="3,3"
+                                                strokeWidth="0.3"
+                                                strokeDasharray="1,1"
                                             />
                                         </svg>
                                         {/* Rotation handle */}
