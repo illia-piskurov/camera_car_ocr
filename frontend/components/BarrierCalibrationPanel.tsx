@@ -137,7 +137,7 @@ function SampleCard({
     )
 }
 
-const LIMIT_OPTIONS = [60, 100, 200, 500]
+const LIMIT_OPTIONS = [60, 100, 200, 500, 1000, 2000]
 
 export function BarrierCalibrationPanel({ barrier, onClose, onBarrierUpdated }: BarrierCalibrationPanelProps) {
     const [data, setData] = useState<CalibrationData | null>(null)
