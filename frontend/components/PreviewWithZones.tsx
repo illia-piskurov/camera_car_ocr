@@ -106,14 +106,14 @@ function CornerHandle({
     onPointerDown: (e: React.PointerEvent<HTMLDivElement>) => void
 }) {
     const posClass = {
-        tl: "absolute -top-2 -left-2 cursor-nwse-resize",
-        tr: "absolute -top-2 -right-2 cursor-nesw-resize",
-        bl: "absolute -bottom-2 -left-2 cursor-nesw-resize",
-        br: "absolute -bottom-2 -right-2 cursor-nwse-resize",
+        tl: "absolute -top-1.5 -left-1.5 cursor-nwse-resize",
+        tr: "absolute -top-1.5 -right-1.5 cursor-nesw-resize",
+        bl: "absolute -bottom-1.5 -left-1.5 cursor-nesw-resize",
+        br: "absolute -bottom-1.5 -right-1.5 cursor-nwse-resize",
     }[corner]
     return (
         <div
-            className={`${posClass} size-4 rounded-full border ${color}`}
+            className={`${posClass} size-3 rounded-full border ${color}`}
             onPointerDown={onPointerDown}
         />
     )
@@ -132,7 +132,7 @@ function RotationHandle({
 }) {
     return (
         <div
-            className="absolute size-4 rounded-full border cursor-grab active:cursor-grabbing"
+            className="absolute size-3 rounded-full border cursor-grab active:cursor-grabbing"
             style={{
                 left: `${x * 100}%`,
                 top: `${y * 100}%`,
@@ -334,8 +334,8 @@ export function PreviewWithZones({
                                                 points={cornersToPoints(corners)}
                                                 fill="none"
                                                 stroke="rgb(251, 191, 36)"
-                                                strokeWidth="0.5"
-                                                strokeDasharray="1,1"
+                                                strokeWidth="0.3"
+                                                strokeDasharray="0.5,0.5"
                                             />
                                             {/* Line from zone center to rotation handle */}
                                             <line
@@ -359,7 +359,7 @@ export function PreviewWithZones({
                                         {corners.map((corner, cIdx) => (
                                             <div
                                                 key={`corner-${cIdx}`}
-                                                className="absolute size-4 rounded-full border border-amber-300/50 bg-amber-500/70 hover:bg-amber-400 z-20"
+                                                className="absolute size-3 rounded-full border border-amber-300/50 bg-amber-500/70 hover:bg-amber-400 z-20"
                                                 style={{
                                                     left: `${corner.x * 100}%`,
                                                     top: `${corner.y * 100}%`,
