@@ -242,7 +242,7 @@ def delete_barrier_check_zone(barrier_id: int) -> dict[str, object]:
 
 
 @app.get("/api/barriers/{barrier_id}/calibration")
-def get_barrier_calibration(barrier_id: int, limit: int = Query(default=100, le=500)) -> dict[str, object]:
+def get_barrier_calibration(barrier_id: int, limit: int = Query(default=100, le=2000)) -> dict[str, object]:
     barrier = db.get_barrier(barrier_id)
     if barrier is None:
         raise HTTPException(status_code=404, detail=f"Barrier {barrier_id} not found")
@@ -851,7 +851,7 @@ def list_events(
     search: str | None = Query(None),
     decision: str | None = Query(None),
     offset: int = Query(0, ge=0),
-    limit: int = Query(200, ge=1, le=500),
+    limit: int = Query(200, ge=1, le=2000),
 ) -> dict[str, object]:
     events = db.get_events(limit=limit, offset=offset, camera_id=camera_id, search=search, decision=decision)
     total = db.count_events(camera_id=camera_id, search=search, decision=decision)
