@@ -32,6 +32,7 @@ type ResizingBarrier = { corner: "tl" | "tr" | "bl" | "br" }
 type ResizingRotatedBarrier = { corner: "tl" | "tr" | "bl" | "br" }
 type ResizingMotion = { corner: "tl" | "tr" | "bl" | "br" }
 type RotatingBarrier = {}  // Used as marker that we're rotating a barrier zone
+type MovingBarrier = {}  // Used as marker that we're moving a barrier zone
 
 function clamp01(value: number): number {
     return Math.max(0, Math.min(1, value))
@@ -163,6 +164,9 @@ export function PreviewWithZones({
     const [resizingRotatedBarrier, setResizingRotatedBarrier] = useState<ResizingRotatedBarrier | null>(null)
     const [resizingMotion, setResizingMotion] = useState<ResizingMotion | null>(null)
     const [rotatingBarrier, setRotatingBarrier] = useState<RotatingBarrier | null>(null)
+    const [movingBarrier, setMovingBarrier] = useState<MovingBarrier | null>(null)
+    const [dragStart, setDragStart] = useState<{x: number; y: number} | null>(null)
+    const [zoneStart, setZoneStart] = useState<{x_min: number; y_min: number; x_max: number; y_max: number} | null>(null)
 
     const visibleZones = useMemo(
         () => [...zones].sort((a, b) => a.sort_order - b.sort_order),
@@ -251,6 +255,17 @@ export function PreviewWithZones({
                 y_min: cy - newHalfH,
                 y_max: cy + newHalfH,
             })
+        } else if (movingBarrier && activeBarrierZone && onChangeActiveBarrierZone && dragStart && zoneStart) {
+            // Move the zone without changing size
+            const dx = point.x - dragStart.x
+            const dy = point.y - dragStart.y
+            onChangeActiveBarrierZone({
+                ...activeBarrierZone,
+                x_min: clamp01(zoneStart.x_min + dx),
+                y_min: clamp01(zoneStart.y_min + dy),
+                x_max: clamp01(zoneStart.x_max + dx),
+                y_max: clamp01(zoneStart.y_max + dy),
+            })
         } else if (rotatingBarrier && activeBarrierZone && onChangeActiveBarrierZone) {
             // Calculate angle from zone center to mouse position
             const cx = (activeBarrierZone.x_min + activeBarrierZone.x_max) / 2
@@ -272,6 +287,9 @@ export function PreviewWithZones({
         setResizingRotatedBarrier(null)
         setResizingMotion(null)
         setRotatingBarrier(null)
+        setMovingBarrier(null)
+        setDragStart(null)
+        setZoneStart(null)
     }
 
     // Convert corners to SVG polygon points string
@@ -387,6 +405,25 @@ export function PreviewWithZones({
                                                 strokeWidth="0.2"
                                                 strokeDasharray="0.3,0.3"
                                             />
+                                            {/* Center dot for moving */}
+                                            <circle
+                                                cx={(((activeBarrierZone.x_min + activeBarrierZone.x_max) / 2) * 100).toFixed(1)}
+                                                cy={(((activeBarrierZone.y_min + activeBarrierZone.y_max) / 2) * 100).toFixed(1)}
+                                                r="0.5"
+                                                fill="rgb(251, 191, 36)"
+                                                style={{ pointerEvents: 'auto', cursor: 'move' }}
+                                                onPointerDown={(e) => {
+                                                    e.stopPropagation()
+                                                    setMovingBarrier({})
+                                                    setDragStart(point)
+                                                    setZoneStart({
+                                                        x_min: activeBarrierZone.x_min,
+                                                        y_min: activeBarrierZone.y_min,
+                                                        x_max: activeBarrierZone.x_max,
+                                                        y_max: activeBarrierZone.y_max,
+                                                    })
+                                                }}
+                                            />
                                             {/* Line from zone center to rotation handle */}
                                             <line
                                                 x1={(((activeBarrierZone.x_min + activeBarrierZone.x_max) / 2) * 100).toFixed(1)}
@@ -445,6 +482,26 @@ export function PreviewWithZones({
                                             width: `${(activeBarrierZone.x_max - activeBarrierZone.x_min) * 100}%`, height: `${(activeBarrierZone.y_max - activeBarrierZone.y_min) * 100}%`,
                                         }}
                                     >
+                                        {/* Center dot for moving */}
+                                        <div
+                                            className="absolute size-2 rounded-full bg-amber-500/70 cursor-move z-10"
+                                            style={{
+                                                left: '50%',
+                                                top: '50%',
+                                                transform: 'translate(-50%, -50%)',
+                                            }}
+                                            onPointerDown={(e) => {
+                                                e.stopPropagation()
+                                                setMovingBarrier({})
+                                                setDragStart(point)
+                                                setZoneStart({
+                                                    x_min: activeBarrierZone.x_min,
+                                                    y_min: activeBarrierZone.y_min,
+                                                    x_max: activeBarrierZone.x_max,
+                                                    y_max: activeBarrierZone.y_max,
+                                                })
+                                            }}
+                                        />
                                         <span className="absolute -top-6 left-0 rounded bg-black/70 px-2 py-0.5 text-[10px] text-amber-300">
                                             {activeBarrierZone.name?.trim() || (activeBarrierZone.barrier_id != null ? `Barrier ${activeBarrierZone.barrier_id}` : "Barrier zone")}
                                         </span>
