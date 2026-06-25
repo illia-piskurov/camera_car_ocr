@@ -358,7 +358,7 @@ def apply_barrier_calibration(barrier_id: int) -> dict[str, object]:
         threshold=float(barrier.get("state_threshold") or 0.05),
         existing_labels=existing_labels,
         snapshot_dir=cfg.recognition_snapshot_dir,
-        max_samples=500,
+        max_samples=2000,
     )
 
     n_open = sum(1 for s in samples if s.get("user_label") == "open")
