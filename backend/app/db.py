@@ -709,7 +709,7 @@ class Database:
             )
 
     def get_group_peer_zones(self, camera_id: int) -> list[dict[str, object]]:
-        """Return zones from all peer cameras in the same group, with camera name attached."""
+        """Return detection zones from all peer cameras in the same group, with camera name attached."""
         with self.SessionLocal() as session:
             cam = session.get(Camera, camera_id)
             if cam is None or cam.group_id is None:
@@ -725,6 +725,7 @@ class Database:
                 zones = session.execute(
                     select(DetectionZone)
                     .where(DetectionZone.camera_id == peer.id)
+                    .where(DetectionZone.zone_type == "detection")  # Only detection zones, not barrier zones
                     .order_by(DetectionZone.sort_order.asc(), DetectionZone.id.asc())
                 ).scalars().all()
                 for z in zones:
