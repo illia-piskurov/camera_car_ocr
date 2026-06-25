@@ -284,8 +284,8 @@ export function PreviewWithZones({
                                             points={cornersToPoints(corners)}
                                             fill="none"
                                             stroke="rgba(251, 191, 36, 0.4)"
-                                            strokeWidth="1.5"
-                                            strokeDasharray="2,2"
+                                            strokeWidth="0.5"
+                                            strokeDasharray="1,1"
                                         />
                                     </svg>
                                 )
@@ -334,8 +334,8 @@ export function PreviewWithZones({
                                                 points={cornersToPoints(corners)}
                                                 fill="none"
                                                 stroke="rgb(251, 191, 36)"
-                                                strokeWidth="1.5"
-                                                strokeDasharray="2,2"
+                                                strokeWidth="0.5"
+                                                strokeDasharray="1,1"
                                             />
                                             {/* Line from zone center to rotation handle */}
                                             <line

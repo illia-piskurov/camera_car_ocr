@@ -105,8 +105,7 @@ def crop_zone(frame: np.ndarray, zone: dict[str, object]) -> np.ndarray:
         left, top, right, bottom = zone_to_pixels(zone, w, h)
         return frame[top:bottom, left:right]
 
-    # For rotated barrier zones, calculate the axis-aligned bounding box
-    # that contains the rotated rectangle
+    # For rotated barrier zones, rotate the image so the zone is axis-aligned
     x_min_norm = _clamp_01(_as_float(zone.get("x_min", 0.0), 0.0))
     y_min_norm = _clamp_01(_as_float(zone.get("y_min", 0.0), 0.0))
     x_max_norm = _clamp_01(_as_float(zone.get("x_max", 1.0), 1.0))
@@ -118,56 +117,26 @@ def crop_zone(frame: np.ndarray, zone: dict[str, object]) -> np.ndarray:
     y_min = min(y_min_norm, y_max_norm)
     y_max = max(y_min_norm, y_max_norm)
 
-    # Center of the unrotated rectangle (in normalized coords)
-    cx_norm = (x_min + x_max) / 2.0
-    cy_norm = (y_min + y_max) / 2.0
+    # Zone center (in pixels)
+    cx_px = int(round((x_min + x_max) / 2.0 * w))
+    cy_px = int(round((y_min + y_max) / 2.0 * h))
 
-    # Half-sizes (in normalized coords)
-    half_w_norm = (x_max - x_min) / 2.0
-    half_h_norm = (y_max - y_min) / 2.0
+    # Zone dimensions (in pixels)
+    zone_w_px = int(round((x_max - x_min) * w))
+    zone_h_px = int(round((y_max - y_min) * h))
 
-    # Convert to pixels
-    cx_px = int(round(cx_norm * w))
-    cy_px = int(round(cy_norm * h))
-    half_w_px = int(round(half_w_norm * w))
-    half_h_px = int(round(half_h_norm * h))
+    # Rotate the image around the zone center
+    # Negative rotation because we want to derotate the zone
+    M = cv2.getRotationMatrix2D((cx_px, cy_px), -rotation, 1.0)
+    rotated = cv2.warpAffine(frame, M, (w, h), flags=cv2.INTER_LINEAR, borderMode=cv2.BORDER_REPLICATE)
 
-    # Calculate the 4 corners of the unrotated rectangle (relative to center)
-    corners = [
-        (-half_w_px, -half_h_px),  # top-left
-        (half_w_px, -half_h_px),   # top-right
-        (half_w_px, half_h_px),    # bottom-right
-        (-half_w_px, half_h_px),   # bottom-left
-    ]
+    # Crop the now-axis-aligned zone from the rotated image
+    left = max(0, cx_px - zone_w_px // 2)
+    right = min(w, cx_px + zone_w_px // 2)
+    top = max(0, cy_px - zone_h_px // 2)
+    bottom = min(h, cy_px + zone_h_px // 2)
 
-    # Rotate the corners
-    rad = np.radians(rotation)
-    cos_a = np.cos(rad)
-    sin_a = np.sin(rad)
-
-    rotated_corners = []
-    for x, y in corners:
-        rx = x * cos_a - y * sin_a
-        ry = x * sin_a + y * cos_a
-        rotated_corners.append((cx_px + rx, cy_px + ry))
-
-    # Find the bounding box of the rotated rectangle
-    min_x = min(r[0] for r in rotated_corners)
-    max_x = max(r[0] for r in rotated_corners)
-    min_y = min(r[1] for r in rotated_corners)
-    max_y = max(r[1] for r in rotated_corners)
-
-    # Clamp to image bounds
-    left = max(0, int(min_x))
-    right = min(w, int(max_x) + 1)
-    top = max(0, int(min_y))
-    bottom = min(h, int(max_y) + 1)
-
-    if right <= left or bottom <= top:
-        # Fallback to simple crop if something went wrong
-        left, top, right, bottom = zone_to_pixels(zone, w, h)
-
-    return frame[top:bottom, left:right]
+    return rotated[top:bottom, left:right]
 
 
 def paste_zone_image(
