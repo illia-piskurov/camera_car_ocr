@@ -315,6 +315,7 @@ export default function Page() {
         y_min: activeCheckZoneDraft.y_min,
         x_max: activeCheckZoneDraft.x_max,
         y_max: activeCheckZoneDraft.y_max,
+        rotation: activeCheckZoneDraft.rotation,
       })
       setActiveCheckZoneSaved(saved)
       setActiveCheckZoneDraft(saved)

@@ -307,117 +307,122 @@ export function PreviewWithZones({
                         })}
 
                         {/* Active barrier check zone (amber solid, editable) - with rotation support */}
-                        {activeBarrierZone && (
-                            <>
-                                {(() => {
-                                    const rotation = activeBarrierZone.rotation ?? 0
-                                    const isRotated = Math.abs(rotation % 360) > 0.1
+                        {activeBarrierZone && (() => {
+                            const rotation = activeBarrierZone.rotation ?? 0
+                            const isRotated = Math.abs(rotation % 360) > 0.1
 
-                                    // Calculate corners and handle position (always needed for rotation handle)
-                                    const corners = getRotatedRectCorners(
-                                        activeBarrierZone.x_min, activeBarrierZone.y_min,
-                                        activeBarrierZone.x_max, activeBarrierZone.y_max,
-                                        rotation
-                                    )
-                                    const handlePos = getRotationHandlePosition(
-                                        activeBarrierZone.x_min, activeBarrierZone.y_min,
-                                        activeBarrierZone.x_max, activeBarrierZone.y_max,
-                                        rotation
-                                    )
+                            // Calculate corners and handle position (always needed for rotation handle)
+                            const corners = getRotatedRectCorners(
+                                activeBarrierZone.x_min, activeBarrierZone.y_min,
+                                activeBarrierZone.x_max, activeBarrierZone.y_max,
+                                rotation
+                            )
+                            const handlePos = getRotationHandlePosition(
+                                activeBarrierZone.x_min, activeBarrierZone.y_min,
+                                activeBarrierZone.x_max, activeBarrierZone.y_max,
+                                rotation
+                            )
 
-                                    if (isRotated) {
-                                        // Rotated zone - render as SVG polygon
-                                        return (
-                                            <>
-                                                <svg className="pointer-events-none absolute inset-0 h-full w-full">
-                                                    <polygon
-                                                        points={cornersToPoints(corners)}
-                                                        fill="none"
-                                                        stroke="rgb(251, 191, 36)"
-                                                        strokeWidth="2"
-                                                        strokeDasharray="5,5"
-                                                    />
-                                                    {/* Line from zone center to rotation handle */}
-                                                    <line
-                                                        x1={`${((activeBarrierZone.x_min + activeBarrierZone.x_max) / 2) * 100}%`}
-                                                        y1={`${((activeBarrierZone.y_min + activeBarrierZone.y_max) / 2) * 100}%`}
-                                                        x2={`${handlePos.x * 100}%`}
-                                                        y2={`${handlePos.y * 100}%`}
-                                                        stroke="rgb(251, 191, 36)"
-                                                        strokeWidth="1"
-                                                        strokeDasharray="3,3"
-                                                    />
-                                                </svg>
-                                                {/* Rotation handle */}
-                                                <RotationHandle
-                                                    x={handlePos.x}
-                                                    y={handlePos.y}
-                                                    color="border-amber-300/50 bg-amber-500/70 hover:bg-amber-400"
-                                                    onPointerDown={(e) => { e.stopPropagation(); setRotatingBarrier({}) }}
-                                                />
-                                                {/* Corner handles - we can't easily use simple positioning with rotation, so we render them based on corners */}
-                                                {corners.map((corner, cIdx) => (
-                                                    <div
-                                                        key={`corner-${cIdx}`}
-                                                        className="absolute size-4 rounded-full border border-amber-300/50 bg-amber-500/70 hover:bg-amber-400"
-                                                        style={{
-                                                            left: `${corner.x * 100}%`,
-                                                            top: `${corner.y * 100}%`,
-                                                            transform: "translate(-50%, -50%)",
-                                                        }}
-                                                        onPointerDown={(e) => {
-                                                            e.stopPropagation()
-                                                            const cornerTypes: ("tl" | "tr" | "bl" | "br")[] = ["tl", "tr", "br", "bl"]
-                                                            setResizingBarrier({ corner: cornerTypes[cIdx] })
-                                                        }}
-                                                    />
-                                                ))}
-                                            </>
-                                        )
-                                    }
-
-                                    // Axis-aligned zone - render as div, but add rotation handle
-                                    return (
-                                        <>
-                                            <div
-                                                className="absolute border-2 border-dashed border-amber-400"
-                                                style={{
-                                                    left: `${activeBarrierZone.x_min * 100}%`, top: `${activeBarrierZone.y_min * 100}%`,
-                                                    width: `${(activeBarrierZone.x_max - activeBarrierZone.x_min) * 100}%`, height: `${(activeBarrierZone.y_max - activeBarrierZone.y_min) * 100}%`,
-                                                }}
-                                            >
-                                                <span className="absolute -top-6 left-0 rounded bg-black/70 px-2 py-0.5 text-[10px] text-amber-300">
-                                                    {activeBarrierZone.name?.trim() || (activeBarrierZone.barrier_id != null ? `Barrier ${activeBarrierZone.barrier_id}` : "Barrier zone")}
-                                                </span>
-                                                <CornerHandle corner="tl" color="border-amber-300/50 bg-amber-500/70 hover:bg-amber-400" onPointerDown={(e) => { e.stopPropagation(); setResizingBarrier({ corner: "tl" }) }} />
-                                                <CornerHandle corner="tr" color="border-amber-300/50 bg-amber-500/70 hover:bg-amber-400" onPointerDown={(e) => { e.stopPropagation(); setResizingBarrier({ corner: "tr" }) }} />
-                                                <CornerHandle corner="bl" color="border-amber-300/50 bg-amber-500/70 hover:bg-amber-400" onPointerDown={(e) => { e.stopPropagation(); setResizingBarrier({ corner: "bl" }) }} />
-                                                <CornerHandle corner="br" color="border-amber-300/50 bg-amber-500/70 hover:bg-amber-400" onPointerDown={(e) => { e.stopPropagation(); setResizingBarrier({ corner: "br" }) }} />
-                                            </div>
-                                            {/* Rotation handle - always visible for axis-aligned zones too */}
-                                            <svg className="pointer-events-none absolute inset-0 h-full w-full">
-                                                {/* Dashed line from center to handle */}
-                                                <line
-                                                    x1={`${((activeBarrierZone.x_min + activeBarrierZone.x_max) / 2) * 100}%`}
-                                                    y1={`${((activeBarrierZone.y_min + activeBarrierZone.y_max) / 2) * 100}%`}
-                                                    x2={`${handlePos.x * 100}%`}
-                                                    y2={`${handlePos.y * 100}%`}
-                                                    stroke="rgb(251, 191, 36)"
-                                                    strokeWidth="1"
-                                                    strokeDasharray="3,3"
-                                                />
-                                            </svg>
-                                            <RotationHandle
-                                                x={handlePos.x}
-                                                y={handlePos.y}
-                                                color="border-amber-300/50 bg-amber-500/70 hover:bg-amber-400"
-                                                onPointerDown={(e) => { e.stopPropagation(); setRotatingBarrier({}) }}
+                            if (isRotated) {
+                                // Rotated zone - render as SVG polygon
+                                return (
+                                    <>
+                                        <svg className="pointer-events-none absolute inset-0 h-full w-full z-10">
+                                            <polygon
+                                                points={cornersToPoints(corners)}
+                                                fill="none"
+                                                stroke="rgb(251, 191, 36)"
+                                                strokeWidth="2"
+                                                strokeDasharray="5,5"
                                             />
-                                        </>
-                                    )
-                                })()}
-                            </>
-                        )}
+                                            {/* Line from zone center to rotation handle */}
+                                            <line
+                                                x1={`${((activeBarrierZone.x_min + activeBarrierZone.x_max) / 2) * 100}%`}
+                                                y1={`${((activeBarrierZone.y_min + activeBarrierZone.y_max) / 2) * 100}%`}
+                                                x2={`${handlePos.x * 100}%`}
+                                                y2={`${handlePos.y * 100}%`}
+                                                stroke="rgb(251, 191, 36)"
+                                                strokeWidth="1"
+                                                strokeDasharray="3,3"
+                                            />
+                                        </svg>
+                                        {/* Rotation handle */}
+                                        <RotationHandle
+                                            x={handlePos.x}
+                                            y={handlePos.y}
+                                            color="border-amber-300/50 bg-amber-500/70 hover:bg-amber-400"
+                                            onPointerDown={(e) => { e.stopPropagation(); setRotatingBarrier({}) }}
+                                        />
+                                        {/* Corner handles - we can't easily use simple positioning with rotation, so we render them based on corners */}
+                                        {corners.map((corner, cIdx) => (
+                                            <div
+                                                key={`corner-${cIdx}`}
+                                                className="absolute size-4 rounded-full border border-amber-300/50 bg-amber-500/70 hover:bg-amber-400 z-20"
+                                                style={{
+                                                    left: `${corner.x * 100}%`,
+                                                    top: `${corner.y * 100}%`,
+                                                    transform: "translate(-50%, -50%)",
+                                                }}
+                                                onPointerDown={(e) => {
+                                                    e.stopPropagation()
+                                                    const cornerTypes: ("tl" | "tr" | "bl" | "br")[] = ["tl", "tr", "br", "bl"]
+                                                    setResizingBarrier({ corner: cornerTypes[cIdx] })
+                                                }}
+                                            />
+                                        ))}
+                                        {/* Zone label */}
+                                        <span className="absolute -top-6 left-0 rounded bg-black/70 px-2 py-0.5 text-[10px] text-amber-300 z-20"
+                                            style={{
+                                                left: `${corners[0].x * 100}%`,
+                                                top: `${corners[0].y * 100}%`,
+                                                transform: "translateY(-100%)"
+                                            }}>
+                                            {activeBarrierZone.name?.trim() || (activeBarrierZone.barrier_id != null ? `Barrier ${activeBarrierZone.barrier_id}` : "Barrier zone")}
+                                        </span>
+                                    </>
+                                )
+                            }
+
+                            // Axis-aligned zone - render as div, but add rotation handle
+                            return (
+                                <>
+                                    <div
+                                        className="absolute border-2 border-dashed border-amber-400"
+                                        style={{
+                                            left: `${activeBarrierZone.x_min * 100}%`, top: `${activeBarrierZone.y_min * 100}%`,
+                                            width: `${(activeBarrierZone.x_max - activeBarrierZone.x_min) * 100}%`, height: `${(activeBarrierZone.y_max - activeBarrierZone.y_min) * 100}%`,
+                                        }}
+                                    >
+                                        <span className="absolute -top-6 left-0 rounded bg-black/70 px-2 py-0.5 text-[10px] text-amber-300">
+                                            {activeBarrierZone.name?.trim() || (activeBarrierZone.barrier_id != null ? `Barrier ${activeBarrierZone.barrier_id}` : "Barrier zone")}
+                                        </span>
+                                        <CornerHandle corner="tl" color="border-amber-300/50 bg-amber-500/70 hover:bg-amber-400" onPointerDown={(e) => { e.stopPropagation(); setResizingBarrier({ corner: "tl" }) }} />
+                                        <CornerHandle corner="tr" color="border-amber-300/50 bg-amber-500/70 hover:bg-amber-400" onPointerDown={(e) => { e.stopPropagation(); setResizingBarrier({ corner: "tr" }) }} />
+                                        <CornerHandle corner="bl" color="border-amber-300/50 bg-amber-500/70 hover:bg-amber-400" onPointerDown={(e) => { e.stopPropagation(); setResizingBarrier({ corner: "bl" }) }} />
+                                        <CornerHandle corner="br" color="border-amber-300/50 bg-amber-500/70 hover:bg-amber-400" onPointerDown={(e) => { e.stopPropagation(); setResizingBarrier({ corner: "br" }) }} />
+                                    </div>
+                                    {/* Rotation handle - always visible for axis-aligned zones too */}
+                                    <svg className="pointer-events-none absolute inset-0 h-full w-full">
+                                        {/* Dashed line from center to handle */}
+                                        <line
+                                            x1={`${((activeBarrierZone.x_min + activeBarrierZone.x_max) / 2) * 100}%`}
+                                            y1={`${((activeBarrierZone.y_min + activeBarrierZone.y_max) / 2) * 100}%`}
+                                            x2={`${handlePos.x * 100}%`}
+                                            y2={`${handlePos.y * 100}%`}
+                                            stroke="rgb(251, 191, 36)"
+                                            strokeWidth="1"
+                                            strokeDasharray="3,3"
+                                        />
+                                    </svg>
+                                    <RotationHandle
+                                        x={handlePos.x}
+                                        y={handlePos.y}
+                                        color="border-amber-300/50 bg-amber-500/70 hover:bg-amber-400"
+                                        onPointerDown={(e) => { e.stopPropagation(); setRotatingBarrier({}) }}
+                                    />
+                                </>
+                            )
+                        })()}
 
                         {/* Saved motion zones (lime dashed, read-only) - axis-aligned only */}
                         {(motionZones ?? []).filter(mz => mz.id !== activeMotionZone?.id).map((mz, idx) => (
