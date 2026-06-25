@@ -414,8 +414,10 @@ export function PreviewWithZones({
                                                 style={{ pointerEvents: 'auto', cursor: 'move' }}
                                                 onPointerDown={(e) => {
                                                     e.stopPropagation()
+                                                    const clickPoint = pointToNormalized(e.clientX, e.clientY)
+                                                    if (!clickPoint) return
                                                     setMovingBarrier({})
-                                                    setDragStart(point)
+                                                    setDragStart(clickPoint)
                                                     setZoneStart({
                                                         x_min: activeBarrierZone.x_min,
                                                         y_min: activeBarrierZone.y_min,
