@@ -125,10 +125,37 @@ def crop_zone(frame: np.ndarray, zone: dict[str, object]) -> np.ndarray:
     zone_w_px = int(round((x_max - x_min) * w))
     zone_h_px = int(round((y_max - y_min) * h))
 
-    # Rotate the image around the zone center
-    # Negative rotation because we want to derotate the zone
+    # Create a mask with the rotated rectangle
+    mask = np.zeros((h, w), dtype=np.uint8)
+
+    # Define the 4 corners of the zone (axis-aligned, then rotated)
+    half_w = zone_w_px // 2
+    half_h = zone_h_px // 2
+    corners = [
+        (cx_px - half_w, cy_px - half_h),  # top-left
+        (cx_px + half_w, cy_px - half_h),  # top-right
+        (cx_px + half_w, cy_px + half_h),  # bottom-right
+        (cx_px - half_w, cy_px + half_h),  # bottom-left
+    ]
+
+    # Rotate corners according to zone rotation
+    rad = np.radians(rotation)
+    cos_a = np.cos(rad)
+    sin_a = np.sin(rad)
+
+    rotated_corners = []
+    for x, y in corners:
+        rx = (x - cx_px) * cos_a - (y - cy_px) * sin_a + cx_px
+        ry = (x - cx_px) * sin_a + (y - cy_px) * cos_a + cy_px
+        rotated_corners.append((rx, ry))
+
+    cv2.fillPoly(mask, [np.array(rotated_corners, dtype=np.int32)], 255)
+
+    # Rotate the image around the zone center (derotate)
+    # Also rotate the mask with the same transformation
     M = cv2.getRotationMatrix2D((cx_px, cy_px), -rotation, 1.0)
     rotated = cv2.warpAffine(frame, M, (w, h), flags=cv2.INTER_LINEAR, borderMode=cv2.BORDER_REPLICATE)
+    rotated_mask = cv2.warpAffine(mask, M, (w, h), flags=cv2.INTER_NEAREST)
 
     # Crop the now-axis-aligned zone from the rotated image
     left = max(0, cx_px - zone_w_px // 2)
@@ -136,7 +163,13 @@ def crop_zone(frame: np.ndarray, zone: dict[str, object]) -> np.ndarray:
     top = max(0, cy_px - zone_h_px // 2)
     bottom = min(h, cy_px + zone_h_px // 2)
 
-    return rotated[top:bottom, left:right]
+    crop = rotated[top:bottom, left:right]
+    crop_mask = rotated_mask[top:bottom, left:right]
+
+    # Apply mask - set pixels outside the zone to black
+    crop = cv2.bitwise_and(crop, crop, mask=crop_mask)
+
+    return crop
 
 
 def paste_zone_image(
