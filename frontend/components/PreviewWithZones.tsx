@@ -29,6 +29,7 @@ function zoneLabel(zone: DetectionZone, index: number): string {
 
 type ResizingZone = { zoneIndex: number; corner: "tl" | "tr" | "bl" | "br" }
 type ResizingBarrier = { corner: "tl" | "tr" | "bl" | "br" }
+type ResizingRotatedBarrier = { corner: "tl" | "tr" | "bl" | "br" }
 type ResizingMotion = { corner: "tl" | "tr" | "bl" | "br" }
 type RotatingBarrier = {}  // Used as marker that we're rotating a barrier zone
 
@@ -159,6 +160,7 @@ export function PreviewWithZones({
     const overlayRef = useRef<HTMLDivElement | null>(null)
     const [resizing, setResizing] = useState<ResizingZone | null>(null)
     const [resizingBarrier, setResizingBarrier] = useState<ResizingBarrier | null>(null)
+    const [resizingRotatedBarrier, setResizingRotatedBarrier] = useState<ResizingRotatedBarrier | null>(null)
     const [resizingMotion, setResizingMotion] = useState<ResizingMotion | null>(null)
     const [rotatingBarrier, setRotatingBarrier] = useState<RotatingBarrier | null>(null)
 
@@ -202,6 +204,53 @@ export function PreviewWithZones({
             else if (resizingMotion.corner === "bl") { mz.x_min = Math.min(point.x, activeMotionZone.x_max - 0.005); mz.y_max = Math.max(point.y, activeMotionZone.y_min + 0.005) }
             else { mz.x_max = Math.max(point.x, activeMotionZone.x_min + 0.005); mz.y_max = Math.max(point.y, activeMotionZone.y_min + 0.005) }
             onChangeActiveMotionZone(mz)
+        } else if (resizingRotatedBarrier && activeBarrierZone && onChangeActiveBarrierZone) {
+            // For rotated zones, resize by changing width/height while keeping rotation
+            const rotation = activeBarrierZone.rotation ?? 0
+            const cx = (activeBarrierZone.x_min + activeBarrierZone.x_max) / 2
+            const cy = (activeBarrierZone.y_min + activeBarrierZone.y_max) / 2
+            const currentHalfW = (activeBarrierZone.x_max - activeBarrierZone.x_min) / 2
+            const currentHalfH = (activeBarrierZone.y_max - activeBarrierZone.y_min) / 2
+
+            // Convert mouse point to zone-local coordinates (derotated)
+            const dx = point.x - cx
+            const dy = point.y - cy
+            const rad = -(rotation * Math.PI) / 180  // negative to derotate
+            const cos = Math.cos(rad)
+            const sin = Math.sin(rad)
+            const localX = dx * cos - dy * sin
+            const localY = dx * sin + dy * cos
+
+            // New half dimensions based on corner
+            let newHalfW = currentHalfW
+            let newHalfH = currentHalfH
+
+            if (resizingRotatedBarrier.corner === "tl") {
+                newHalfW = Math.abs(localX)
+                newHalfH = Math.abs(localY)
+            } else if (resizingRotatedBarrier.corner === "tr") {
+                newHalfW = Math.abs(localX)
+                newHalfH = Math.abs(localY)
+            } else if (resizingRotatedBarrier.corner === "bl") {
+                newHalfW = Math.abs(localX)
+                newHalfH = Math.abs(localY)
+            } else { // br
+                newHalfW = Math.abs(localX)
+                newHalfH = Math.abs(localY)
+            }
+
+            // Ensure minimum size
+            const minHalf = 0.005
+            newHalfW = Math.max(newHalfW, minHalf)
+            newHalfH = Math.max(newHalfH, minHalf)
+
+            onChangeActiveBarrierZone({
+                ...activeBarrierZone,
+                x_min: cx - newHalfW,
+                x_max: cx + newHalfW,
+                y_min: cy - newHalfH,
+                y_max: cy + newHalfH,
+            })
         } else if (rotatingBarrier && activeBarrierZone && onChangeActiveBarrierZone) {
             // Calculate angle from zone center to mouse position
             const cx = (activeBarrierZone.x_min + activeBarrierZone.x_max) / 2
@@ -220,6 +269,7 @@ export function PreviewWithZones({
     function handlePointerUp() {
         setResizing(null)
         setResizingBarrier(null)
+        setResizingRotatedBarrier(null)
         setResizingMotion(null)
         setRotatingBarrier(null)
     }
@@ -334,8 +384,8 @@ export function PreviewWithZones({
                                                 points={cornersToPoints(corners)}
                                                 fill="none"
                                                 stroke="rgb(251, 191, 36)"
-                                                strokeWidth="0.3"
-                                                strokeDasharray="0.5,0.5"
+                                                strokeWidth="0.2"
+                                                strokeDasharray="0.3,0.3"
                                             />
                                             {/* Line from zone center to rotation handle */}
                                             <line
@@ -355,7 +405,23 @@ export function PreviewWithZones({
                                             color="border-amber-300/50 bg-amber-500/70 hover:bg-amber-400"
                                             onPointerDown={(e) => { e.stopPropagation(); setRotatingBarrier({}) }}
                                         />
-                                        {/* Corner handles - hidden for rotated zones (resize only at 0 rotation) */}
+                                        {/* Corner handles - now enabled for rotated zones */}
+                                        {corners.map((corner, cIdx) => (
+                                            <div
+                                                key={`corner-${cIdx}`}
+                                                className="absolute size-2 rounded-full border border-amber-300/50 bg-amber-500/70 hover:bg-amber-400 z-20"
+                                                style={{
+                                                    left: `${corner.x * 100}%`,
+                                                    top: `${corner.y * 100}%`,
+                                                    transform: "translate(-50%, -50%)",
+                                                }}
+                                                onPointerDown={(e) => {
+                                                    e.stopPropagation()
+                                                    const cornerTypes: ("tl" | "tr" | "bl" | "br")[] = ["tl", "tr", "br", "bl"]
+                                                    setResizingRotatedBarrier({ corner: cornerTypes[cIdx] })
+                                                }}
+                                            />
+                                        ))}
                                         {/* Zone label */}
                                         <span className="absolute -top-6 left-0 rounded bg-black/70 px-2 py-0.5 text-[10px] text-amber-300 z-20"
                                             style={{
