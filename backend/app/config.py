@@ -99,7 +99,7 @@ class Settings:
     recognition_snapshot_enabled: bool = True
     recognition_snapshot_dir: str = "data/recognized"
     recognition_snapshot_jpeg_quality: int = 90
-    recognition_snapshot_max_files: int = 1000
+    recognition_snapshot_retention_days: float = 3.0
     detection_zones_max: int = 2
     alpr_detector_providers: str = ""
     alpr_ocr_providers: str = ""
@@ -211,8 +211,8 @@ class Settings:
                     "RECOGNITION_SNAPSHOT_JPEG_QUALITY", Settings.recognition_snapshot_jpeg_quality
                 )
             ),
-            recognition_snapshot_max_files=int(
-                os.getenv("RECOGNITION_SNAPSHOT_MAX_FILES", Settings.recognition_snapshot_max_files)
+            recognition_snapshot_retention_days=float(
+                os.getenv("RECOGNITION_SNAPSHOT_RETENTION_DAYS", Settings.recognition_snapshot_retention_days)
             ),
             detection_zones_max=int(os.getenv("DETECTION_ZONES_MAX", Settings.detection_zones_max)),
             alpr_detector_providers=os.getenv("ALPR_DETECTOR_PROVIDERS", Settings.alpr_detector_providers),

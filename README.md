@@ -83,10 +83,10 @@ Edit `backend/onec_whitelist_stub.txt` and keep one plate per line.
 - `RECOGNITION_SNAPSHOT_ENABLED` (default `1`)
 - `RECOGNITION_SNAPSHOT_DIR` (default `data/recognized`)
 - `RECOGNITION_SNAPSHOT_JPEG_QUALITY` (default `90`)
-- `RECOGNITION_SNAPSHOT_MAX_FILES` (default `1000`)
+- `RECOGNITION_SNAPSHOT_RETENTION_DAYS` (default `3`) — зберігати фото подій за останні N днів; старіші видаляються автоматично
 
-When any detection frame is produced, backend saves an annotated snapshot with plate/decision overlay into `RECOGNITION_SNAPSHOT_DIR`.
-Dashboard table rows can open related event snapshot via backend endpoint `/api/events/{event_id}/image`.
+Коли будь-який кадр з детекцією зберігається, бекенд зберігає анотований снапшот з накладанням номерного знаку/рішення у `RECOGNITION_SNAPSHOT_DIR`.
+Стрічки таблиці дашборду можуть відкривати пов'язаний знімок події через ендпоінт `/api/events/{event_id}/image`.
 
 ## Real-time Event Stream (SSE)
 

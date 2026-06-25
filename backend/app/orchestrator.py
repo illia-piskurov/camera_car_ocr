@@ -463,7 +463,7 @@ def _snapshot_stage(
             apply_alpr_predictions=apply_alpr_predictions,
             output_dir=cfg.recognition_snapshot_dir,
             jpeg_quality=cfg.recognition_snapshot_jpeg_quality,
-            max_files=cfg.recognition_snapshot_max_files,
+            retention_days=cfg.recognition_snapshot_retention_days,
         )
     except OSError as exc:
         LOG.warning("Failed to save recognition snapshot: %s", exc)

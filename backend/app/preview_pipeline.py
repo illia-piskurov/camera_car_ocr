@@ -52,27 +52,21 @@ def _safe_file_segment(value: str | None, fallback: str = "unknown") -> str:
     return cleaned if cleaned else fallback
 
 
-def _prune_old_snapshots(directory: str, max_files: int) -> None:
-    if max_files <= 0:
+def _prune_snapshots_by_age(directory: str, retention_days: float) -> None:
+    """Delete snapshot JPEG files older than *retention_days* days."""
+    if retention_days <= 0:
         return
 
-    entries: list[tuple[float, str]] = []
+    import time
+
+    cutoff = time.time() - retention_days * 86400.0
     for name in os.listdir(directory):
         if not name.lower().endswith(".jpg"):
             continue
         path = os.path.join(directory, name)
         try:
-            entries.append((os.path.getmtime(path), path))
-        except OSError:
-            continue
-
-    if len(entries) <= max_files:
-        return
-
-    entries.sort(key=lambda item: item[0])
-    for _, path in entries[: len(entries) - max_files]:
-        try:
-            os.remove(path)
+            if os.path.getmtime(path) < cutoff:
+                os.remove(path)
         except OSError:
             continue
 
@@ -89,7 +83,7 @@ def write_recognition_snapshot(
     zone_name: str | None,
     output_dir: str,
     jpeg_quality: int,
-    max_files: int,
+    retention_days: float,
     apply_alpr_predictions: bool = True,
 ) -> None:
     os.makedirs(output_dir, exist_ok=True)
@@ -131,4 +125,5 @@ def write_recognition_snapshot(
     with open(out_path, "wb") as out_file:
         out_file.write(encoded.tobytes())
 
-    _prune_old_snapshots(output_dir, max_files=max_files)
+    _prune_snapshots_by_age(output_dir, retention_days=retention_days)
+
