@@ -183,24 +183,24 @@ export function PreviewWithZones({
             const zone = zones[resizing.zoneIndex]
             if (!zone) return
             const z = { ...zone }
-            if (resizing.corner === "tl") { z.x_min = Math.min(point.x, zone.x_max - 0.02); z.y_min = Math.min(point.y, zone.y_max - 0.02) }
-            else if (resizing.corner === "tr") { z.x_max = Math.max(point.x, zone.x_min + 0.02); z.y_min = Math.min(point.y, zone.y_max - 0.02) }
-            else if (resizing.corner === "bl") { z.x_min = Math.min(point.x, zone.x_max - 0.02); z.y_max = Math.max(point.y, zone.y_min + 0.02) }
-            else { z.x_max = Math.max(point.x, zone.x_min + 0.02); z.y_max = Math.max(point.y, zone.y_min + 0.02) }
+            if (resizing.corner === "tl") { z.x_min = Math.min(point.x, zone.x_max - 0.005); z.y_min = Math.min(point.y, zone.y_max - 0.005) }
+            else if (resizing.corner === "tr") { z.x_max = Math.max(point.x, zone.x_min + 0.005); z.y_min = Math.min(point.y, zone.y_max - 0.005) }
+            else if (resizing.corner === "bl") { z.x_min = Math.min(point.x, zone.x_max - 0.005); z.y_max = Math.max(point.y, zone.y_min + 0.005) }
+            else { z.x_max = Math.max(point.x, zone.x_min + 0.005); z.y_max = Math.max(point.y, zone.y_min + 0.005) }
             onChangeZones(zones.map((z2, i) => (i === resizing.zoneIndex ? z : z2)))
         } else if (resizingBarrier && activeBarrierZone && onChangeActiveBarrierZone) {
             const bz = { ...activeBarrierZone }
-            if (resizingBarrier.corner === "tl") { bz.x_min = Math.min(point.x, activeBarrierZone.x_max - 0.02); bz.y_min = Math.min(point.y, activeBarrierZone.y_max - 0.02) }
-            else if (resizingBarrier.corner === "tr") { bz.x_max = Math.max(point.x, activeBarrierZone.x_min + 0.02); bz.y_min = Math.min(point.y, activeBarrierZone.y_max - 0.02) }
-            else if (resizingBarrier.corner === "bl") { bz.x_min = Math.min(point.x, activeBarrierZone.x_max - 0.02); bz.y_max = Math.max(point.y, activeBarrierZone.y_min + 0.02) }
-            else { bz.x_max = Math.max(point.x, activeBarrierZone.x_min + 0.02); bz.y_max = Math.max(point.y, activeBarrierZone.y_min + 0.02) }
+            if (resizingBarrier.corner === "tl") { bz.x_min = Math.min(point.x, activeBarrierZone.x_max - 0.005); bz.y_min = Math.min(point.y, activeBarrierZone.y_max - 0.005) }
+            else if (resizingBarrier.corner === "tr") { bz.x_max = Math.max(point.x, activeBarrierZone.x_min + 0.005); bz.y_min = Math.min(point.y, activeBarrierZone.y_max - 0.005) }
+            else if (resizingBarrier.corner === "bl") { bz.x_min = Math.min(point.x, activeBarrierZone.x_max - 0.005); bz.y_max = Math.max(point.y, activeBarrierZone.y_min + 0.005) }
+            else { bz.x_max = Math.max(point.x, activeBarrierZone.x_min + 0.005); bz.y_max = Math.max(point.y, activeBarrierZone.y_min + 0.005) }
             onChangeActiveBarrierZone(bz)
         } else if (resizingMotion && activeMotionZone && onChangeActiveMotionZone) {
             const mz = { ...activeMotionZone }
-            if (resizingMotion.corner === "tl") { mz.x_min = Math.min(point.x, activeMotionZone.x_max - 0.02); mz.y_min = Math.min(point.y, activeMotionZone.y_max - 0.02) }
-            else if (resizingMotion.corner === "tr") { mz.x_max = Math.max(point.x, activeMotionZone.x_min + 0.02); mz.y_min = Math.min(point.y, activeMotionZone.y_max - 0.02) }
-            else if (resizingMotion.corner === "bl") { mz.x_min = Math.min(point.x, activeMotionZone.x_max - 0.02); mz.y_max = Math.max(point.y, activeMotionZone.y_min + 0.02) }
-            else { mz.x_max = Math.max(point.x, activeMotionZone.x_min + 0.02); mz.y_max = Math.max(point.y, activeMotionZone.y_min + 0.02) }
+            if (resizingMotion.corner === "tl") { mz.x_min = Math.min(point.x, activeMotionZone.x_max - 0.005); mz.y_min = Math.min(point.y, activeMotionZone.y_max - 0.005) }
+            else if (resizingMotion.corner === "tr") { mz.x_max = Math.max(point.x, activeMotionZone.x_min + 0.005); mz.y_min = Math.min(point.y, activeMotionZone.y_max - 0.005) }
+            else if (resizingMotion.corner === "bl") { mz.x_min = Math.min(point.x, activeMotionZone.x_max - 0.005); mz.y_max = Math.max(point.y, activeMotionZone.y_min + 0.005) }
+            else { mz.x_max = Math.max(point.x, activeMotionZone.x_min + 0.005); mz.y_max = Math.max(point.y, activeMotionZone.y_min + 0.005) }
             onChangeActiveMotionZone(mz)
         } else if (rotatingBarrier && activeBarrierZone && onChangeActiveBarrierZone) {
             // Calculate angle from zone center to mouse position
