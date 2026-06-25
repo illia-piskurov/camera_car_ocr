@@ -93,6 +93,7 @@ class BarrierCheckZoneInput(BaseModel):
     y_min: float = Field(ge=0.0, le=1.0)
     x_max: float = Field(ge=0.0, le=1.0)
     y_max: float = Field(ge=0.0, le=1.0)
+    rotation: float = Field(default=0.0, ge=0.0, lt=360.0)
 
 
 class ZonesPayload(BaseModel):
@@ -224,6 +225,7 @@ def put_barrier_check_zone(barrier_id: int, payload: BarrierCheckZoneInput) -> d
             "y_min": payload.y_min,
             "x_max": payload.x_max,
             "y_max": payload.y_max,
+            "rotation": payload.rotation,
         },
         default_name="Barrier check",
     )

@@ -103,6 +103,7 @@ export type BarrierZone = {
     y_min: number
     x_max: number
     y_max: number
+    rotation?: number  // degrees, 0 = no rotation, clockwise
     zone_type: "barrier_check"
 }
 

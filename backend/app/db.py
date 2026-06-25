@@ -128,6 +128,8 @@ class DetectionZone(Base):
     # 'barrier_check' — small zone where barrier arm is visible when closed
     zone_type: Mapped[str] = mapped_column(String(32), default="detection")
     barrier_id: Mapped[int | None] = mapped_column(Integer, ForeignKey("barriers.id", ondelete="SET NULL"), nullable=True)
+    # Rotation in degrees (clockwise), for barrier_check zones only
+    rotation: Mapped[float] = mapped_column(Float, default=0.0)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
 
 
@@ -1014,6 +1016,7 @@ class Database:
             "sort_order": int(row.sort_order),
             "cross_camera_enabled": bool(row.cross_camera_enabled),
             "cross_zone_id": row.cross_zone_id,
+            "rotation": float(row.rotation) if row.rotation is not None else 0.0,
         }
 
     def get_barrier_check_zone(self, barrier_id: int) -> dict[str, object] | None:
@@ -1067,6 +1070,7 @@ class Database:
                     y_min=float(zone.get("y_min", 0.0)),
                     x_max=float(zone.get("x_max", 1.0)),
                     y_max=float(zone.get("y_max", 1.0)),
+                    rotation=float(zone.get("rotation", 0.0)),
                     is_enabled=True,
                     sort_order=99,
                     updated_at=utc_now(),

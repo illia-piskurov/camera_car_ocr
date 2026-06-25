@@ -54,6 +54,10 @@ def sanitize_zone(raw: dict[str, object], default_name: str) -> dict[str, object
     if y_max - y_min < min_span:
         y_max = min(1.0, y_min + min_span)
 
+    # Normalize rotation to [0, 360)
+    rotation = _as_float(raw.get("rotation", 0.0), 0.0)
+    rotation = rotation % 360.0
+
     result: dict[str, object] = {
         "name": str(raw.get("name") or default_name),
         "ha_open_entity_id": str(raw.get("ha_open_entity_id") or raw.get("open_entity_id") or ""),
@@ -64,6 +68,7 @@ def sanitize_zone(raw: dict[str, object], default_name: str) -> dict[str, object
         "y_max": y_max,
         "is_enabled": bool(raw.get("is_enabled", True)),
         "sort_order": _as_int(raw.get("sort_order", 0), 0),
+        "rotation": rotation,
     }
     if "barrier_id" in raw:
         result["barrier_id"] = raw["barrier_id"]
@@ -93,7 +98,75 @@ def zone_to_pixels(zone: dict[str, object], frame_width: int, frame_height: int)
 
 def crop_zone(frame: np.ndarray, zone: dict[str, object]) -> np.ndarray:
     h, w = frame.shape[:2]
-    left, top, right, bottom = zone_to_pixels(zone, w, h)
+    rotation = _as_float(zone.get("rotation", 0.0), 0.0)
+
+    # If no rotation or not a barrier zone, use simple cropping
+    if abs(rotation % 360.0) < 0.01 or str(zone.get("zone_type")) != "barrier_check":
+        left, top, right, bottom = zone_to_pixels(zone, w, h)
+        return frame[top:bottom, left:right]
+
+    # For rotated barrier zones, calculate the axis-aligned bounding box
+    # that contains the rotated rectangle
+    x_min_norm = _clamp_01(_as_float(zone.get("x_min", 0.0), 0.0))
+    y_min_norm = _clamp_01(_as_float(zone.get("y_min", 0.0), 0.0))
+    x_max_norm = _clamp_01(_as_float(zone.get("x_max", 1.0), 1.0))
+    y_max_norm = _clamp_01(_as_float(zone.get("y_max", 1.0), 1.0))
+
+    # Ensure proper ordering
+    x_min = min(x_min_norm, x_max_norm)
+    x_max = max(x_min_norm, x_max_norm)
+    y_min = min(y_min_norm, y_max_norm)
+    y_max = max(y_min_norm, y_max_norm)
+
+    # Center of the unrotated rectangle (in normalized coords)
+    cx_norm = (x_min + x_max) / 2.0
+    cy_norm = (y_min + y_max) / 2.0
+
+    # Half-sizes (in normalized coords)
+    half_w_norm = (x_max - x_min) / 2.0
+    half_h_norm = (y_max - y_min) / 2.0
+
+    # Convert to pixels
+    cx_px = int(round(cx_norm * w))
+    cy_px = int(round(cy_norm * h))
+    half_w_px = int(round(half_w_norm * w))
+    half_h_px = int(round(half_h_norm * h))
+
+    # Calculate the 4 corners of the unrotated rectangle (relative to center)
+    corners = [
+        (-half_w_px, -half_h_px),  # top-left
+        (half_w_px, -half_h_px),   # top-right
+        (half_w_px, half_h_px),    # bottom-right
+        (-half_w_px, half_h_px),   # bottom-left
+    ]
+
+    # Rotate the corners
+    rad = np.radians(rotation)
+    cos_a = np.cos(rad)
+    sin_a = np.sin(rad)
+
+    rotated_corners = []
+    for x, y in corners:
+        rx = x * cos_a - y * sin_a
+        ry = x * sin_a + y * cos_a
+        rotated_corners.append((cx_px + rx, cy_px + ry))
+
+    # Find the bounding box of the rotated rectangle
+    min_x = min(r[0] for r in rotated_corners)
+    max_x = max(r[0] for r in rotated_corners)
+    min_y = min(r[1] for r in rotated_corners)
+    max_y = max(r[1] for r in rotated_corners)
+
+    # Clamp to image bounds
+    left = max(0, int(min_x))
+    right = min(w, int(max_x) + 1)
+    top = max(0, int(min_y))
+    bottom = min(h, int(max_y) + 1)
+
+    if right <= left or bottom <= top:
+        # Fallback to simple crop if something went wrong
+        left, top, right, bottom = zone_to_pixels(zone, w, h)
+
     return frame[top:bottom, left:right]
 
 
@@ -129,25 +202,88 @@ def draw_zones(
         if not bool(zone.get("is_enabled", True)):
             continue
 
-        left, top, right, bottom = zone_to_pixels(zone, w, h)
         zone_id = _as_int(zone.get("id"), -1)
         if zone_id < 0:
             zone_id = None
         is_highlighted = highlight_zone_id is not None and zone_id == highlight_zone_id
         color = (0, 255, 255) if is_highlighted else (120, 120, 120)
         thickness = 3 if is_highlighted else 1
-        cv2.rectangle(result, (left, top), (right, bottom), color, thickness)
 
-        label = str(zone.get("name") or f"Zone {idx + 1}")
-        cv2.putText(
-            result,
-            label,
-            (left + 6, max(20, top + 20)),
-            cv2.FONT_HERSHEY_SIMPLEX,
-            0.65 if is_highlighted else 0.55,
-            color,
-            2 if is_highlighted else 1,
-            cv2.LINE_AA,
-        )
+        rotation = _as_float(zone.get("rotation", 0.0), 0.0)
+
+        # Draw rotated rectangle for barrier zones with rotation
+        if abs(rotation % 360.0) > 0.01 and str(zone.get("zone_type")) == "barrier_check":
+            x_min_norm = _clamp_01(_as_float(zone.get("x_min", 0.0), 0.0))
+            y_min_norm = _clamp_01(_as_float(zone.get("y_min", 0.0), 0.0))
+            x_max_norm = _clamp_01(_as_float(zone.get("x_max", 1.0), 1.0))
+            y_max_norm = _clamp_01(_as_float(zone.get("y_max", 1.0), 1.0))
+
+            x_min = min(x_min_norm, x_max_norm)
+            x_max = max(x_min_norm, x_max_norm)
+            y_min = min(y_min_norm, y_max_norm)
+            y_max = max(y_min_norm, y_max_norm)
+
+            cx_norm = (x_min + x_max) / 2.0
+            cy_norm = (y_min + y_max) / 2.0
+            half_w_norm = (x_max - x_min) / 2.0
+            half_h_norm = (y_max - y_min) / 2.0
+
+            cx_px = int(round(cx_norm * w))
+            cy_px = int(round(cy_norm * h))
+            half_w_px = int(round(half_w_norm * w))
+            half_h_px = int(round(half_h_norm * h))
+
+            # Calculate rotated corners
+            rad = np.radians(rotation)
+            cos_a = np.cos(rad)
+            sin_a = np.sin(rad)
+
+            corners = [
+                (-half_w_px, -half_h_px),
+                (half_w_px, -half_h_px),
+                (half_w_px, half_h_px),
+                (-half_w_px, half_h_px),
+            ]
+
+            rotated_corners = []
+            for x, y in corners:
+                rx = x * cos_a - y * sin_a
+                ry = x * sin_a + y * cos_a
+                rotated_corners.append((cx_px + rx, cy_px + ry))
+
+            # Draw as polygon
+            pts = np.array(rotated_corners, dtype=np.int32).reshape((-1, 1, 2))
+            cv2.polylines(result, [pts], True, color, thickness)
+
+            # Get label position (top of rotated rect)
+            top_x = int(round((rotated_corners[0][0] + rotated_corners[1][0]) / 2))
+            top_y = int(round(min(rotated_corners[0][1], rotated_corners[1][1])))
+            label = str(zone.get("name") or f"Zone {idx + 1}")
+            cv2.putText(
+                result,
+                label,
+                (top_x + 6, max(20, top_y - 5)),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.65 if is_highlighted else 0.55,
+                color,
+                2 if is_highlighted else 1,
+                cv2.LINE_AA,
+            )
+        else:
+            # Simple rectangle for non-rotated zones
+            left, top, right, bottom = zone_to_pixels(zone, w, h)
+            cv2.rectangle(result, (left, top), (right, bottom), color, thickness)
+
+            label = str(zone.get("name") or f"Zone {idx + 1}")
+            cv2.putText(
+                result,
+                label,
+                (left + 6, max(20, top + 20)),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.65 if is_highlighted else 0.55,
+                color,
+                2 if is_highlighted else 1,
+                cv2.LINE_AA,
+            )
 
     return result

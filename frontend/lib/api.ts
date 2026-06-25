@@ -329,7 +329,7 @@ export async function deleteBarrier(barrierId: number): Promise<void> {
 
 export async function saveBarrierCheckZone(
     barrierId: number,
-    zone: { camera_id: number | null; name?: string; x_min: number; y_min: number; x_max: number; y_max: number },
+    zone: { camera_id: number | null; name?: string; x_min: number; y_min: number; x_max: number; y_max: number; rotation?: number },
 ): Promise<BarrierZone | null> {
     const response = await fetch(`${API_BASE}/api/barriers/${barrierId}/check-zone`, {
         method: "PUT",
