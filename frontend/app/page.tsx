@@ -291,6 +291,7 @@ export default function Page() {
       y_min: 0.2,
       x_max: 0.7,
       y_max: 0.8,
+      rotation: 0,
       zone_type: "barrier_check",
     }
     setActiveCheckZoneDraft(draft)

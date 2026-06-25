@@ -106,14 +106,14 @@ function CornerHandle({
     onPointerDown: (e: React.PointerEvent<HTMLDivElement>) => void
 }) {
     const posClass = {
-        tl: "absolute -top-1.5 -left-1.5 cursor-nwse-resize",
-        tr: "absolute -top-1.5 -right-1.5 cursor-nesw-resize",
-        bl: "absolute -bottom-1.5 -left-1.5 cursor-nesw-resize",
-        br: "absolute -bottom-1.5 -right-1.5 cursor-nwse-resize",
+        tl: "absolute -top-1 -left-1 cursor-nwse-resize",
+        tr: "absolute -top-1 -right-1 cursor-nesw-resize",
+        bl: "absolute -bottom-1 -left-1 cursor-nesw-resize",
+        br: "absolute -bottom-1 -right-1 cursor-nwse-resize",
     }[corner]
     return (
         <div
-            className={`${posClass} size-3 rounded-full border ${color}`}
+            className={`${posClass} size-2 rounded-full border ${color}`}
             onPointerDown={onPointerDown}
         />
     )
@@ -132,7 +132,7 @@ function RotationHandle({
 }) {
     return (
         <div
-            className="absolute size-3 rounded-full border cursor-grab active:cursor-grabbing"
+            className="absolute size-2 rounded-full border cursor-grab active:cursor-grabbing"
             style={{
                 left: `${x * 100}%`,
                 top: `${y * 100}%`,
@@ -355,23 +355,7 @@ export function PreviewWithZones({
                                             color="border-amber-300/50 bg-amber-500/70 hover:bg-amber-400"
                                             onPointerDown={(e) => { e.stopPropagation(); setRotatingBarrier({}) }}
                                         />
-                                        {/* Corner handles - we can't easily use simple positioning with rotation, so we render them based on corners */}
-                                        {corners.map((corner, cIdx) => (
-                                            <div
-                                                key={`corner-${cIdx}`}
-                                                className="absolute size-3 rounded-full border border-amber-300/50 bg-amber-500/70 hover:bg-amber-400 z-20"
-                                                style={{
-                                                    left: `${corner.x * 100}%`,
-                                                    top: `${corner.y * 100}%`,
-                                                    transform: "translate(-50%, -50%)",
-                                                }}
-                                                onPointerDown={(e) => {
-                                                    e.stopPropagation()
-                                                    const cornerTypes: ("tl" | "tr" | "bl" | "br")[] = ["tl", "tr", "br", "bl"]
-                                                    setResizingBarrier({ corner: cornerTypes[cIdx] })
-                                                }}
-                                            />
-                                        ))}
+                                        {/* Corner handles - hidden for rotated zones (resize only at 0 rotation) */}
                                         {/* Zone label */}
                                         <span className="absolute -top-6 left-0 rounded bg-black/70 px-2 py-0.5 text-[10px] text-amber-300 z-20"
                                             style={{
