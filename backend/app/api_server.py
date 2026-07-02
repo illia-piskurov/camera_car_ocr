@@ -60,6 +60,7 @@ class ZoneInput(BaseModel):
     sort_order: int = 0
     cross_camera_enabled: bool = True
     cross_zone_id: int | None = None
+    zone_group_id: int | None = None
     zone_type: str = "detection"
 
 
@@ -73,6 +74,8 @@ class BarrierUpdateInput(BaseModel):
     name: str | None = Field(default=None, max_length=128)
     ha_open_entity_id: str | None = Field(default=None, max_length=128)
     ha_close_entity_id: str | None = Field(default=None, max_length=128)
+    ha_open_sensor_id: str | None = Field(default=None, max_length=128)
+    ha_close_sensor_id: str | None = Field(default=None, max_length=128)
     state_check_enabled: bool | None = None
     state_threshold: float | None = Field(default=None, ge=0.001, le=1.0)
 
@@ -132,6 +135,16 @@ class CameraGroupUpdateInput(BaseModel):
     cross_suppress_sec: int | None = Field(default=None, ge=0)
 
 
+class ZoneGroupInput(BaseModel):
+    name: str = Field(min_length=1, max_length=128)
+    suppress_sec: int = Field(default=120, ge=0)
+
+
+class ZoneGroupUpdateInput(BaseModel):
+    name: str | None = Field(default=None, max_length=128)
+    suppress_sec: int | None = Field(default=None, ge=0)
+
+
 def _read_preview_meta(meta_path: str) -> dict[str, object]:
     if not os.path.exists(meta_path):
         return {}
@@ -189,6 +202,8 @@ def update_barrier(barrier_id: int, payload: BarrierUpdateInput) -> dict[str, ob
         name=payload.name,
         ha_open_entity_id=payload.ha_open_entity_id,
         ha_close_entity_id=payload.ha_close_entity_id,
+        ha_open_sensor_id=payload.ha_open_sensor_id,
+        ha_close_sensor_id=payload.ha_close_sensor_id,
         state_check_enabled=payload.state_check_enabled,
         state_threshold=payload.state_threshold,
     )
@@ -511,6 +526,33 @@ def delete_camera_group(group_id: int) -> dict[str, object]:
     deleted = db.delete_camera_group(group_id)
     if not deleted:
         raise HTTPException(status_code=404, detail=f"Camera group {group_id} not found")
+    return {"status": "ok"}
+
+
+@app.get("/api/zone-groups")
+def list_zone_groups_endpoint() -> dict[str, object]:
+    return {"zone_groups": db.list_zone_groups()}
+
+
+@app.post("/api/zone-groups")
+def create_zone_group_endpoint(payload: ZoneGroupInput) -> dict[str, object]:
+    group = db.create_zone_group(name=payload.name, suppress_sec=payload.suppress_sec)
+    return {"status": "ok", "zone_group": group}
+
+
+@app.put("/api/zone-groups/{group_id}")
+def update_zone_group_endpoint(group_id: int, payload: ZoneGroupUpdateInput) -> dict[str, object]:
+    group = db.update_zone_group(group_id, name=payload.name, suppress_sec=payload.suppress_sec)
+    if group is None:
+        raise HTTPException(status_code=404, detail=f"Zone group {group_id} not found")
+    return {"status": "ok", "zone_group": group}
+
+
+@app.delete("/api/zone-groups/{group_id}")
+def delete_zone_group_endpoint(group_id: int) -> dict[str, object]:
+    ok = db.delete_zone_group(group_id)
+    if not ok:
+        raise HTTPException(status_code=404, detail=f"Zone group {group_id} not found")
     return {"status": "ok"}
 
 

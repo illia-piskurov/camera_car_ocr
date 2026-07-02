@@ -62,6 +62,16 @@ class CameraGroup(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
 
 
+class ZoneGroup(Base):
+    __tablename__ = "zone_groups"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    name: Mapped[str] = mapped_column(String(128), unique=True)
+    suppress_sec: Mapped[int] = mapped_column(Integer, default=120)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+
+
 class Barrier(Base):
     __tablename__ = "barriers"
 
@@ -69,13 +79,16 @@ class Barrier(Base):
     name: Mapped[str] = mapped_column(String(128), default="")
     ha_open_entity_id: Mapped[str] = mapped_column(String(128), default="")
     ha_close_entity_id: Mapped[str] = mapped_column(String(128), default="")
+    # Binary sensor entity IDs for state detection (e.g. binary_sensor.gate_open)
+    ha_open_sensor_id: Mapped[str] = mapped_column(String(128), default="")
+    ha_close_sensor_id: Mapped[str] = mapped_column(String(128), default="")
     # State detection
     state_check_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
     state_threshold: Mapped[float] = mapped_column(Float, default=0.05)
     state_reference_event_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
     state_reference_crop: Mapped[bytes | None] = mapped_column(LargeBinary, nullable=True)
     state_model_data: Mapped[bytes | None] = mapped_column(LargeBinary, nullable=True)
-    # Live state written by whichever camera worker monitors this barrier — shared across workers
+    # Live state written by the barrier controller — shared across workers
     last_known_state: Mapped[str | None] = mapped_column(String(16), nullable=True)
     last_state_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
@@ -128,6 +141,7 @@ class DetectionZone(Base):
     # 'barrier_check' — small zone where barrier arm is visible when closed
     zone_type: Mapped[str] = mapped_column(String(32), default="detection")
     barrier_id: Mapped[int | None] = mapped_column(Integer, ForeignKey("barriers.id", ondelete="SET NULL"), nullable=True)
+    zone_group_id: Mapped[int | None] = mapped_column(Integer, ForeignKey("zone_groups.id", ondelete="SET NULL"), nullable=True)
     # Rotation in degrees (clockwise), for barrier_check zones only
     rotation: Mapped[float] = mapped_column(Float, default=0.0)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
@@ -199,6 +213,12 @@ class Database:
                 conn.commit()
 
             barrier_cols = {row[1] for row in conn.execute(text("PRAGMA table_info(barriers)"))}
+            if "ha_open_sensor_id" not in barrier_cols:
+                conn.execute(text("ALTER TABLE barriers ADD COLUMN ha_open_sensor_id VARCHAR(128) NOT NULL DEFAULT ''"))
+                conn.commit()
+            if "ha_close_sensor_id" not in barrier_cols:
+                conn.execute(text("ALTER TABLE barriers ADD COLUMN ha_close_sensor_id VARCHAR(128) NOT NULL DEFAULT ''"))
+                conn.commit()
             if "state_check_enabled" not in barrier_cols:
                 conn.execute(text("ALTER TABLE barriers ADD COLUMN state_check_enabled INTEGER NOT NULL DEFAULT 0"))
                 conn.commit()
@@ -219,6 +239,11 @@ class Database:
                 conn.commit()
             if "last_state_at" not in barrier_cols:
                 conn.execute(text("ALTER TABLE barriers ADD COLUMN last_state_at DATETIME"))
+                conn.commit()
+
+            zone_cols2 = {row[1] for row in conn.execute(text("PRAGMA table_info(detection_zones)"))}
+            if "zone_group_id" not in zone_cols2:
+                conn.execute(text("ALTER TABLE detection_zones ADD COLUMN zone_group_id INTEGER REFERENCES zone_groups(id) ON DELETE SET NULL"))
                 conn.commit()
 
             wp_cols = {row[1] for row in conn.execute(text("PRAGMA table_info(whitelist_plates)"))}
@@ -300,6 +325,8 @@ class Database:
             "name": row.name,
             "ha_open_entity_id": row.ha_open_entity_id,
             "ha_close_entity_id": row.ha_close_entity_id,
+            "ha_open_sensor_id": row.ha_open_sensor_id or "",
+            "ha_close_sensor_id": row.ha_close_sensor_id or "",
             "state_check_enabled": bool(row.state_check_enabled),
             "state_threshold": float(row.state_threshold) if row.state_threshold is not None else 0.05,
             "state_reference_event_id": row.state_reference_event_id,
@@ -325,12 +352,16 @@ class Database:
         name: str,
         ha_open_entity_id: str,
         ha_close_entity_id: str,
+        ha_open_sensor_id: str = "",
+        ha_close_sensor_id: str = "",
     ) -> dict[str, object]:
         with self.SessionLocal() as session:
             row = Barrier(
                 name=name.strip(),
                 ha_open_entity_id=ha_open_entity_id.strip(),
                 ha_close_entity_id=ha_close_entity_id.strip(),
+                ha_open_sensor_id=ha_open_sensor_id.strip(),
+                ha_close_sensor_id=ha_close_sensor_id.strip(),
                 created_at=utc_now(),
                 updated_at=utc_now(),
             )
@@ -346,6 +377,8 @@ class Database:
         name: str | None = None,
         ha_open_entity_id: str | None = None,
         ha_close_entity_id: str | None = None,
+        ha_open_sensor_id: str | None = None,
+        ha_close_sensor_id: str | None = None,
         state_check_enabled: bool | None = None,
         state_threshold: float | None = None,
     ) -> dict[str, object] | None:
@@ -359,6 +392,10 @@ class Database:
                 row.ha_open_entity_id = ha_open_entity_id.strip()
             if ha_close_entity_id is not None:
                 row.ha_close_entity_id = ha_close_entity_id.strip()
+            if ha_open_sensor_id is not None:
+                row.ha_open_sensor_id = ha_open_sensor_id.strip()
+            if ha_close_sensor_id is not None:
+                row.ha_close_sensor_id = ha_close_sensor_id.strip()
             if state_check_enabled is not None:
                 row.state_check_enabled = state_check_enabled
             if state_threshold is not None:
@@ -607,6 +644,92 @@ class Database:
             session.commit()
             return True
 
+    # ----------------------------------------------------------------- zone groups
+
+    def _zone_group_row(self, row: ZoneGroup) -> dict[str, object]:
+        return {
+            "id": row.id,
+            "name": row.name,
+            "suppress_sec": int(row.suppress_sec),
+            "created_at": _utc_or_now(row.created_at).isoformat(),
+            "updated_at": _utc_or_now(row.updated_at).isoformat(),
+        }
+
+    def list_zone_groups(self) -> list[dict[str, object]]:
+        with self.SessionLocal() as session:
+            rows = session.execute(select(ZoneGroup).order_by(ZoneGroup.name.asc())).scalars().all()
+            return [self._zone_group_row(r) for r in rows]
+
+    def get_zone_group(self, group_id: int) -> dict[str, object] | None:
+        with self.SessionLocal() as session:
+            row = session.get(ZoneGroup, group_id)
+            return self._zone_group_row(row) if row else None
+
+    def create_zone_group(self, *, name: str, suppress_sec: int = 120) -> dict[str, object]:
+        with self.SessionLocal() as session:
+            row = ZoneGroup(name=name.strip(), suppress_sec=max(0, suppress_sec), created_at=utc_now(), updated_at=utc_now())
+            session.add(row)
+            session.commit()
+            session.refresh(row)
+            return self._zone_group_row(row)
+
+    def update_zone_group(self, group_id: int, *, name: str | None = None, suppress_sec: int | None = None) -> dict[str, object] | None:
+        with self.SessionLocal() as session:
+            row = session.get(ZoneGroup, group_id)
+            if row is None:
+                return None
+            if name is not None and name.strip():
+                row.name = name.strip()
+            if suppress_sec is not None:
+                row.suppress_sec = max(0, suppress_sec)
+            row.updated_at = utc_now()
+            session.commit()
+            session.refresh(row)
+            return self._zone_group_row(row)
+
+    def delete_zone_group(self, group_id: int) -> bool:
+        with self.SessionLocal() as session:
+            row = session.get(ZoneGroup, group_id)
+            if row is None:
+                return False
+            session.execute(text("UPDATE detection_zones SET zone_group_id = NULL WHERE zone_group_id = :gid"), {"gid": group_id})
+            session.delete(row)
+            session.commit()
+            return True
+
+    def is_zone_group_suppressed(self, plate: str, zone_id: int | None, max_distance: int = 0) -> bool:
+        """Return True if another zone in the same zone_group recently opened for this plate."""
+        if zone_id is None:
+            return False
+        with self.SessionLocal() as session:
+            zone = session.get(DetectionZone, zone_id)
+            if zone is None or zone.zone_group_id is None:
+                return False
+            group = session.get(ZoneGroup, zone.zone_group_id)
+            if group is None or group.suppress_sec <= 0:
+                return False
+            cutoff = utc_now() - timedelta(seconds=group.suppress_sec)
+            peer_zone_ids = session.execute(
+                select(DetectionZone.id)
+                .where(DetectionZone.zone_group_id == zone.zone_group_id)
+                .where(DetectionZone.id != zone_id)
+            ).scalars().all()
+            if not peer_zone_ids:
+                return False
+            stmt = (
+                select(RecognitionEvent.plate)
+                .where(RecognitionEvent.decision == "open")
+                .where(RecognitionEvent.zone_id.in_(peer_zone_ids))
+                .where(RecognitionEvent.occurred_at >= cutoff)
+            )
+            plates = session.execute(stmt).scalars().all()
+            if not plates:
+                return False
+            if max_distance <= 0:
+                return plate in plates
+            from .fuzzy_edit import levenshtein_bounded
+            return any(levenshtein_bounded(plate, p, max_distance) <= max_distance for p in plates)
+
     # ----------------------------------------------------------------- cameras
 
     def create_camera(
@@ -709,40 +832,45 @@ class Database:
             )
 
     def get_group_peer_zones(self, camera_id: int) -> list[dict[str, object]]:
-        """Return detection zones from all peer cameras in the same group, with camera name attached."""
+        """Return detection zones from all cameras in the same group (including self).
+
+        Same-camera zones appear first (for same-camera cross-zone suppression),
+        followed by zones from other cameras in the group.
+        """
         with self.SessionLocal() as session:
             cam = session.get(Camera, camera_id)
             if cam is None or cam.group_id is None:
                 return []
-            peer_cam_rows = session.execute(
+            all_cam_rows = session.execute(
                 select(Camera)
                 .where(Camera.group_id == cam.group_id)
-                .where(Camera.id != camera_id)
                 .order_by(Camera.sort_order.asc(), Camera.id.asc())
             ).scalars().all()
             result = []
-            for peer in peer_cam_rows:
+            for c in all_cam_rows:
                 zones = session.execute(
                     select(DetectionZone)
-                    .where(DetectionZone.camera_id == peer.id)
-                    .where(DetectionZone.zone_type == "detection")  # Only detection zones, not barrier zones
+                    .where(DetectionZone.camera_id == c.id)
+                    .where(DetectionZone.zone_type == "detection")
                     .order_by(DetectionZone.sort_order.asc(), DetectionZone.id.asc())
                 ).scalars().all()
                 for z in zones:
                     result.append({
                         "id": z.id,
-                        "camera_id": peer.id,
-                        "camera_name": peer.name,
+                        "camera_id": c.id,
+                        "camera_name": c.name,
                         "name": z.name,
+                        "is_same_camera": c.id == camera_id,
                     })
             return result
 
     def is_cross_camera_suppressed(self, plate: str, camera_id: int, zone_id: int | None = None, max_distance: int = 0) -> bool:
-        """Return True if a peer zone (or any peer camera in the group) recently opened for this plate.
+        """Return True if another zone in the group recently opened for this plate.
 
         If zone_id is given and the zone has cross_camera_enabled=False → not suppressed.
         If zone_id is given and cross_zone_id is set → check only that specific zone.
-        Otherwise → check all peer cameras in the group (group-level fallback).
+        Otherwise → group-level: check all zones on all cameras in the group,
+          excluding the current zone itself to avoid self-suppression.
         """
         with self.SessionLocal() as session:
             cam = session.get(Camera, camera_id)
@@ -769,20 +897,22 @@ class Database:
                         target_zone_ids = [zone_row.cross_zone_id]
 
             if target_zone_ids is None:
-                # Group-level: all peer cameras
-                peer_cameras = session.execute(
+                # Group-level: all cameras in the group (including current camera)
+                all_group_cameras = session.execute(
                     select(Camera.id)
                     .where(Camera.group_id == cam.group_id)
-                    .where(Camera.id != camera_id)
                 ).scalars().all()
-                if not peer_cameras:
+                if not all_group_cameras:
                     return False
                 stmt = (
                     select(RecognitionEvent.plate)
                     .where(RecognitionEvent.decision == "open")
-                    .where(RecognitionEvent.camera_id.in_(peer_cameras))
+                    .where(RecognitionEvent.camera_id.in_(all_group_cameras))
                     .where(RecognitionEvent.occurred_at >= cutoff)
                 )
+                # Exclude the current zone to avoid self-suppression
+                if zone_id is not None:
+                    stmt = stmt.where(RecognitionEvent.zone_id != zone_id)
             else:
                 stmt = (
                     select(RecognitionEvent.plate)
@@ -958,11 +1088,13 @@ class Database:
             for index, zone in enumerate(limited):
                 raw_cross_zone_id = zone.get("cross_zone_id")
                 raw_barrier_id = zone.get("barrier_id")
+                raw_zone_group_id = zone.get("zone_group_id")
                 session.add(
                     DetectionZone(
                         camera_id=camera_id,
                         zone_type="detection",
                         barrier_id=int(raw_barrier_id) if raw_barrier_id is not None else None,
+                        zone_group_id=int(raw_zone_group_id) if raw_zone_group_id is not None else None,
                         name=str(zone.get("name") or f"Zone {index + 1}"),
                         ha_open_entity_id=str(zone.get("ha_open_entity_id") or zone.get("open_entity_id") or ""),
                         ha_close_entity_id=str(zone.get("ha_close_entity_id") or zone.get("close_entity_id") or ""),
@@ -1017,6 +1149,7 @@ class Database:
             "sort_order": int(row.sort_order),
             "cross_camera_enabled": bool(row.cross_camera_enabled),
             "cross_zone_id": row.cross_zone_id,
+            "zone_group_id": row.zone_group_id,
             "rotation": float(row.rotation) if row.rotation is not None else 0.0,
         }
 

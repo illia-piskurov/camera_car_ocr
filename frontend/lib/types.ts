@@ -6,6 +6,14 @@ export type CameraGroup = {
     updated_at: string
 }
 
+export type ZoneGroup = {
+    id: number
+    name: string
+    suppress_sec: number
+    created_at: string
+    updated_at: string
+}
+
 export type Camera = {
     id: number
     name: string
@@ -46,6 +54,8 @@ export type Barrier = {
     name: string
     ha_open_entity_id: string
     ha_close_entity_id: string
+    ha_open_sensor_id: string
+    ha_close_sensor_id: string
     state_check_enabled: boolean
     state_threshold: number
     state_reference_event_id: number | null
@@ -91,6 +101,7 @@ export type DetectionZone = {
     ha_close_entity_id?: string
     cross_camera_enabled: boolean
     cross_zone_id: number | null
+    zone_group_id?: number | null
     zone_type?: string
 }
 
@@ -196,6 +207,7 @@ export type PeerZone = {
     camera_id: number
     camera_name: string
     name: string
+    is_same_camera: boolean
 }
 
 export type DashboardEvent = {

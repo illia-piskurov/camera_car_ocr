@@ -12,7 +12,6 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from .barrier import BarrierController
-from .barrier_state import BarrierStateDetector
 from .runtime_state import ZoneRuntimeState
 
 LOG = logging.getLogger(__name__)
@@ -30,7 +29,6 @@ class PipelineState:
     last_preview_write_ts: float = 0.0
     last_no_zone_warning_ts: float = 0.0
     prev_frame: Any = None  # np.ndarray | None — kept for motion detection
-    barrier_detectors: dict[int, BarrierStateDetector] = field(default_factory=dict)
     # Suppress repeated deny/observed events for same plate+zone
     _deny_ts: dict[tuple[str, int | None], float] = field(default_factory=dict)
     _observed_ts: dict[tuple[str, int | None], float] = field(default_factory=dict)
@@ -135,11 +133,6 @@ class PipelineState:
 
     @classmethod
     def create_initial(cls) -> PipelineState:
-        """Factory method to create initial pipeline state.
-
-        Returns:
-            Fresh PipelineState with all defaults.
-        """
         return cls(
             zone_states={},
             last_preview_write_ts=0.0,

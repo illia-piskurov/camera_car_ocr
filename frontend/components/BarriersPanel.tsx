@@ -1,9 +1,8 @@
 "use client"
 
 import { useEffect, useState } from "react"
-import { Plus, Trash2, X, Check, PencilLine, FlaskConical } from "lucide-react"
+import { Plus, Trash2, X, Check, PencilLine } from "lucide-react"
 import { Button } from "@/components/ui/button"
-import { BarrierCalibrationPanel } from "@/components/BarrierCalibrationPanel"
 import { listBarriers, createBarrier, updateBarrier, deleteBarrier } from "@/lib/api"
 import type { Barrier } from "@/lib/types"
 
@@ -21,8 +20,9 @@ export function BarriersPanel({ onClose, onBarriersChanged }: BarriersPanelProps
     const [editName, setEditName] = useState("")
     const [editOpen, setEditOpen] = useState("")
     const [editClose, setEditClose] = useState("")
+    const [editOpenSensor, setEditOpenSensor] = useState("")
+    const [editCloseSensor, setEditCloseSensor] = useState("")
     const [editStateEnabled, setEditStateEnabled] = useState(false)
-    const [editThreshold, setEditThreshold] = useState("5")
     const [editBusy, setEditBusy] = useState(false)
 
     const [creatingNew, setCreatingNew] = useState(false)
@@ -33,7 +33,6 @@ export function BarriersPanel({ onClose, onBarriersChanged }: BarriersPanelProps
 
     const [deletingId, setDeletingId] = useState<number | null>(null)
     const [deleteBusy, setDeleteBusy] = useState(false)
-    const [calibratingBarrier, setCalibratingBarrier] = useState<Barrier | null>(null)
 
     useEffect(() => {
         let alive = true
@@ -58,21 +57,22 @@ export function BarriersPanel({ onClose, onBarriersChanged }: BarriersPanelProps
         setEditName(barrier.name)
         setEditOpen(barrier.ha_open_entity_id)
         setEditClose(barrier.ha_close_entity_id)
+        setEditOpenSensor(barrier.ha_open_sensor_id)
+        setEditCloseSensor(barrier.ha_close_sensor_id)
         setEditStateEnabled(barrier.state_check_enabled)
-        setEditThreshold(String(Math.round(barrier.state_threshold * 100)))
     }
 
     async function saveEdit() {
         if (editingId === null) return
         setEditBusy(true)
         try {
-            const thresholdPct = parseFloat(editThreshold)
             const updated = await updateBarrier(editingId, {
                 name: editName,
                 ha_open_entity_id: editOpen,
                 ha_close_entity_id: editClose,
+                ha_open_sensor_id: editOpenSensor,
+                ha_close_sensor_id: editCloseSensor,
                 state_check_enabled: editStateEnabled,
-                state_threshold: isNaN(thresholdPct) ? 0.05 : Math.max(0.1, Math.min(100, thresholdPct)) / 100,
             })
             setBarriers((prev) => prev.map((b) => (b.id === editingId ? updated : b)))
             setEditingId(null)
@@ -186,27 +186,29 @@ export function BarriersPanel({ onClose, onBarriersChanged }: BarriersPanelProps
                                             Check state before opening (skip if already open)
                                         </label>
                                         {editStateEnabled && (
-                                            editingId !== null && barriers.find(b => b.id === editingId)?.has_model ? (
-                                                <p className="text-[10px] text-violet-300/80 rounded bg-violet-500/10 px-2 py-1">
-                                                    Model trained — threshold not used. Use Calibrate to retrain.
-                                                </p>
-                                            ) : (
+                                            <div className="space-y-1.5 pt-0.5">
                                                 <label className="space-y-1 text-[11px] text-slate-400">
-                                                    <span>Sensitivity threshold (%) — fallback when no model</span>
-                                                    <div className="flex items-center gap-2">
-                                                        <input
-                                                            type="number"
-                                                            min={0.1}
-                                                            max={100}
-                                                            step={0.5}
-                                                            value={editThreshold}
-                                                            onChange={(e) => setEditThreshold(e.target.value)}
-                                                            className="w-24 rounded border border-slate-600 bg-slate-900 px-2 py-1 text-xs text-slate-100 outline-none focus:border-amber-400"
-                                                        />
-                                                        <span className="text-slate-500 text-[10px]">% pixels changed → OPEN</span>
-                                                    </div>
+                                                    <span>Open sensor entity ID</span>
+                                                    <input
+                                                        value={editOpenSensor}
+                                                        onChange={(e) => setEditOpenSensor(e.target.value)}
+                                                        className="w-full rounded border border-slate-600 bg-slate-900 px-2 py-1 text-xs text-slate-100 outline-none focus:border-amber-400"
+                                                        placeholder="binary_sensor.gate_open"
+                                                    />
                                                 </label>
-                                            )
+                                                <label className="space-y-1 text-[11px] text-slate-400">
+                                                    <span>Close sensor entity ID</span>
+                                                    <input
+                                                        value={editCloseSensor}
+                                                        onChange={(e) => setEditCloseSensor(e.target.value)}
+                                                        className="w-full rounded border border-slate-600 bg-slate-900 px-2 py-1 text-xs text-slate-100 outline-none focus:border-amber-400"
+                                                        placeholder="binary_sensor.gate_closed"
+                                                    />
+                                                </label>
+                                                <p className="text-[10px] text-slate-500">
+                                                    ON = barrier is in that state. At least one sensor required.
+                                                </p>
+                                            </div>
                                         )}
                                     </div>
                                     <div className="flex gap-2 pt-1">
@@ -244,34 +246,27 @@ export function BarriersPanel({ onClose, onBarriersChanged }: BarriersPanelProps
                                                 Close: {barrier.ha_close_entity_id || <span className="text-slate-600">—</span>}
                                             </p>
                                             {barrier.state_check_enabled && (
-                                                <p className="text-[10px] mt-1 flex flex-wrap gap-1">
-                                                    <span className="rounded bg-amber-500/20 px-1.5 py-0.5 text-amber-300">
+                                                <div className="mt-1 space-y-0.5">
+                                                    <span className="inline-block rounded bg-amber-500/20 px-1.5 py-0.5 text-[10px] text-amber-300">
                                                         State check ON
-                                                        {!barrier.has_model && ` · ${(barrier.state_threshold * 100).toFixed(1)}%`}
-                                                        {!barrier.has_reference && !barrier.has_model && " · no reference"}
                                                     </span>
-                                                    {barrier.has_model && (
-                                                        <span className="rounded bg-violet-500/20 px-1.5 py-0.5 text-violet-300">
-                                                            model trained
-                                                        </span>
+                                                    {barrier.ha_open_sensor_id && (
+                                                        <p className="text-[10px] text-slate-500 truncate">
+                                                            Open sensor: {barrier.ha_open_sensor_id}
+                                                        </p>
                                                     )}
-                                                    {barrier.has_reference && !barrier.has_model && (
-                                                        <span className="rounded bg-slate-700/60 px-1.5 py-0.5 text-slate-400">
-                                                            ref only
-                                                        </span>
+                                                    {barrier.ha_close_sensor_id && (
+                                                        <p className="text-[10px] text-slate-500 truncate">
+                                                            Close sensor: {barrier.ha_close_sensor_id}
+                                                        </p>
                                                     )}
-                                                </p>
+                                                    {!barrier.ha_open_sensor_id && !barrier.ha_close_sensor_id && (
+                                                        <p className="text-[10px] text-red-400/70">no sensors configured</p>
+                                                    )}
+                                                </div>
                                             )}
                                         </div>
                                         <div className="flex shrink-0 gap-1">
-                                            <button
-                                                type="button"
-                                                onClick={() => setCalibratingBarrier(barrier)}
-                                                className="rounded p-1.5 text-slate-400 hover:bg-amber-500/20 hover:text-amber-300"
-                                                title="Calibrate"
-                                            >
-                                                <FlaskConical size={14} />
-                                            </button>
                                             <button
                                                 type="button"
                                                 onClick={() => startEdit(barrier)}
@@ -393,17 +388,6 @@ export function BarriersPanel({ onClose, onBarriersChanged }: BarriersPanelProps
             </div>
         </div>
 
-        {calibratingBarrier && (
-            <BarrierCalibrationPanel
-                barrier={calibratingBarrier}
-                onClose={() => setCalibratingBarrier(null)}
-                onBarrierUpdated={(updated) => {
-                    setBarriers((prev) => prev.map((b) => (b.id === updated.id ? updated : b)))
-                    setCalibratingBarrier(updated)
-                    onBarriersChanged?.()
-                }}
-            />
-        )}
     </>
     )
 }

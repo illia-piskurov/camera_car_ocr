@@ -207,6 +207,53 @@ class BarrierController:
         )
         return False
 
+    def get_sensor_state(self, entity_id: str) -> str | None:
+        """Fetch the current state of an HA entity. Returns the raw state string or None on error."""
+        if not self._enabled_live or not entity_id:
+            return None
+        url = f"{self.ha_base_url}/api/states/{entity_id}"
+        headers = {"Authorization": f"Bearer {self.ha_token}"}
+        try:
+            with httpx.Client(timeout=self.timeout_sec, verify=self.verify_tls) as client:
+                response = client.get(url, headers=headers)
+                response.raise_for_status()
+                data = response.json()
+                return str(data.get("state", "")).lower()
+        except Exception as exc:  # noqa: BLE001
+            LOG.warning("Failed to get sensor state entity_id=%s error=%s", entity_id, exc)
+            return None
+
+    def get_barrier_sensor_state(
+        self,
+        *,
+        open_sensor_id: str,
+        close_sensor_id: str,
+    ) -> str | None:
+        """Check barrier open/closed state via HA binary sensors.
+
+        Returns 'open', 'closed', or None if state cannot be determined.
+        Open sensor takes priority: if it reads 'on' the barrier is open.
+        """
+        from .barrier_state import OPEN, CLOSED
+        if open_sensor_id:
+            state = self.get_sensor_state(open_sensor_id)
+            if state == "on":
+                return OPEN
+            if state == "off":
+                # Open sensor explicitly says not open; check close sensor for confirmation
+                if close_sensor_id:
+                    close_state = self.get_sensor_state(close_sensor_id)
+                    if close_state == "on":
+                        return CLOSED
+                return CLOSED
+        elif close_sensor_id:
+            state = self.get_sensor_state(close_sensor_id)
+            if state == "on":
+                return CLOSED
+            if state == "off":
+                return OPEN
+        return None
+
     def open(self, plate: str, reason: str, zone_id: int | None = None) -> bool:
         return self._call_ha_service(
             entity_id=self._resolve_entity_id(action="open", zone_id=zone_id),

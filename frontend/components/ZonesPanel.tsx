@@ -1,9 +1,8 @@
 "use client"
 
-import { useEffect, useMemo, useState } from "react"
+import { useMemo } from "react"
 import { Button } from "@/components/ui/button"
-import { fetchCameraPeerZones } from "@/lib/api"
-import type { Barrier, BarrierZone, DetectionZone, MotionZone, PeerZone } from "@/lib/types"
+import type { Barrier, BarrierZone, DetectionZone, MotionZone, ZoneGroup } from "@/lib/types"
 
 type ZonesPanelProps = {
     zones: DetectionZone[]
@@ -12,7 +11,7 @@ type ZonesPanelProps = {
     zonesSaving: boolean
     zonesMessage: string | null
     cameraId: number | null
-    cameraGroupId: number | null
+    zoneGroups: ZoneGroup[]
     barriers: Barrier[]
     onChangeZones: (zones: DetectionZone[]) => void
     onSaveZones: () => void
@@ -62,7 +61,7 @@ export function ZonesPanel({
     zonesSaving,
     zonesMessage,
     cameraId,
-    cameraGroupId,
+    zoneGroups,
     barriers,
     onChangeZones,
     onSaveZones,
@@ -95,21 +94,6 @@ export function ZonesPanel({
 }: ZonesPanelProps) {
     const visibleZones = useMemo(() => [...zones].sort((a, b) => a.sort_order - b.sort_order), [zones])
 
-    const [peerZones, setPeerZones] = useState<PeerZone[]>([])
-
-    useEffect(() => {
-        if (cameraId === null || cameraGroupId === null) {
-            setPeerZones([])
-            return
-        }
-        const controller = new AbortController()
-        fetchCameraPeerZones(cameraId, controller.signal)
-            .then(setPeerZones)
-            .catch(() => setPeerZones([]))
-        return () => controller.abort()
-    }, [cameraId, cameraGroupId])
-
-    const inGroup = cameraGroupId !== null && peerZones.length > 0
     const messageColor = zonesMessage?.toLowerCase().includes("saved") ? "text-emerald-300" : "text-red-300"
 
     return (
@@ -215,38 +199,27 @@ export function ZonesPanel({
                                         />
                                     </label>
 
-                                    {inGroup && (
-                                        <div className="mt-1 space-y-1.5 rounded border border-slate-600/50 bg-slate-900/40 px-2 py-2">
-                                            <p className="text-[11px] font-medium uppercase tracking-wider text-slate-400">Cross-camera</p>
-                                            <label className="flex cursor-pointer items-center gap-2 text-[11px] text-slate-300">
-                                                <input
-                                                    type="checkbox"
-                                                    checked={zone.cross_camera_enabled ?? true}
-                                                    onChange={(e) => onUpdateZone(zoneIndex, (prev) => ({ ...prev, cross_camera_enabled: e.target.checked }))}
-                                                    className="accent-blue-500"
-                                                />
-                                                Enable suppression for this zone
-                                            </label>
-                                            {(zone.cross_camera_enabled ?? true) && (
-                                                <label className="space-y-1 text-[11px] text-slate-400">
-                                                    <span>Suppress when zone opened:</span>
-                                                    <select
-                                                        value={zone.cross_zone_id ?? ""}
-                                                        onChange={(e) => onUpdateZone(zoneIndex, (prev) => ({
-                                                            ...prev,
-                                                            cross_zone_id: e.target.value ? parseInt(e.target.value) : null,
-                                                        }))}
-                                                        className="w-full rounded border border-slate-600 bg-slate-800 px-2 py-1 text-xs text-slate-100 outline-none focus:border-blue-400"
-                                                    >
-                                                        <option value="">Any peer camera (group-level)</option>
-                                                        {peerZones.map((pz) => (
-                                                            <option key={pz.id} value={pz.id}>{pz.camera_name} · {pz.name}</option>
-                                                        ))}
-                                                    </select>
-                                                </label>
-                                            )}
-                                        </div>
-                                    )}
+                                    <label className="space-y-1 text-[11px] text-slate-400">
+                                        <span>Zone group (suppression)</span>
+                                        <select
+                                            value={zone.zone_group_id ?? ""}
+                                            onChange={(e) => onUpdateZone(zoneIndex, (prev) => ({
+                                                ...prev,
+                                                zone_group_id: e.target.value ? parseInt(e.target.value) : null,
+                                            }))}
+                                            className="w-full rounded border border-slate-600 bg-slate-800 px-2 py-1 text-xs text-slate-100 outline-none focus:border-blue-400"
+                                        >
+                                            <option value="">— No group —</option>
+                                            {zoneGroups.map((g) => (
+                                                <option key={g.id} value={g.id}>
+                                                    {g.name} · {g.suppress_sec}s
+                                                </option>
+                                            ))}
+                                        </select>
+                                        {zoneGroups.length === 0 && (
+                                            <p className="text-[10px] text-slate-500">No zone groups. Create one via Groups menu.</p>
+                                        )}
+                                    </label>
                                 </div>
                             </div>
                         )
@@ -268,76 +241,6 @@ export function ZonesPanel({
                 </Button>
             </div>
             {zonesMessage && <p className={`text-xs ${messageColor}`}>{zonesMessage}</p>}
-
-            {/* Barrier Check Zone */}
-            <div className="border-t border-slate-700/70 pt-3 space-y-2">
-                <h3 className="text-xs uppercase tracking-widest text-amber-400/80">Barrier Check Zone</h3>
-                <p className="text-[11px] text-slate-400">
-                    Draw the zone where the barrier arm is visible when closed. Used to detect open/closed state.
-                </p>
-
-                {barriers.length === 0 ? (
-                    <p className="text-[11px] text-slate-500">
-                        No barriers configured.{" "}
-                        <button type="button" onClick={onOpenBarriers} className="text-amber-400/80 underline hover:text-amber-300">
-                            Open Barriers
-                        </button>{" "}
-                        to add one.
-                    </p>
-                ) : (
-                    <>
-                        <label className="space-y-1 text-[11px] text-slate-400">
-                            <span>Barrier</span>
-                            <select
-                                value={activeCheckBarrierId ?? ""}
-                                onChange={(e) => onSelectCheckBarrier(e.target.value ? parseInt(e.target.value) : null)}
-                                className="w-full rounded border border-slate-600 bg-slate-800 px-2 py-1 text-xs text-slate-100 outline-none focus:border-amber-400"
-                            >
-                                <option value="">— Select barrier —</option>
-                                {barriers.map((b) => (
-                                    <option key={b.id} value={b.id}>{b.name || `Barrier ${b.id}`}</option>
-                                ))}
-                            </select>
-                        </label>
-
-                        {activeCheckBarrierId !== null && (
-                            activeCheckZone ? (
-                                <div className="space-y-2 rounded border border-amber-500/30 bg-amber-500/5 p-2">
-                                    <p className="text-[11px] text-amber-300">Zone configured. Drag amber handles to adjust.</p>
-                                    <div className="flex gap-2">
-                                        <Button size="sm" onClick={onSaveCheckZone} disabled={!activeCheckZoneDirty || activeCheckZoneSaving}
-                                            className="flex-1 border border-amber-500/30 bg-amber-600/80 text-amber-50 hover:bg-amber-500">
-                                            {activeCheckZoneSaving ? "Saving..." : "Save"}
-                                        </Button>
-                                        <Button size="sm" variant="secondary" onClick={onResetCheckZone} disabled={!activeCheckZoneDirty}
-                                            className="border border-slate-600/70 bg-slate-700/80 text-slate-100 hover:bg-slate-600/90">
-                                            Reset
-                                        </Button>
-                                        <Button size="sm" variant="secondary" onClick={onDeleteCheckZone} disabled={activeCheckZoneSaving}
-                                            className="border border-red-500/40 bg-red-500/10 text-red-300 hover:bg-red-500/20">
-                                            Delete
-                                        </Button>
-                                    </div>
-                                </div>
-                            ) : (
-                                <div className="space-y-2">
-                                    <p className="text-[11px] text-slate-500">No check zone on this camera.</p>
-                                    <Button size="sm" variant="secondary" onClick={onSetCheckZone}
-                                        className="w-full border border-amber-500/30 bg-amber-500/10 text-amber-200 hover:bg-amber-500/20">
-                                        + Set Check Zone
-                                    </Button>
-                                </div>
-                            )
-                        )}
-                    </>
-                )}
-
-                {activeCheckZoneMessage && (
-                    <p className={`text-xs ${activeCheckZoneMessage.toLowerCase().includes("saved") || activeCheckZoneMessage.toLowerCase().includes("deleted") ? "text-emerald-300" : "text-red-300"}`}>
-                        {activeCheckZoneMessage}
-                    </p>
-                )}
-            </div>
 
             {/* Motion Zones */}
             <div className="border-t border-slate-700/70 pt-3 space-y-2">

@@ -14,9 +14,9 @@ import { EventsTable } from "@/components/EventsTable"
 import { OnboardingPanel } from "@/components/OnboardingPanel"
 import { WhitelistPanel } from "@/components/WhitelistPanel"
 import { StatusPanel } from "@/components/StatusPanel"
-import { deleteCamera, saveBarrierCheckZone, deleteBarrierCheckZone, saveZones, saveCameraZones, toEventImageSrc, updateCamera, createMotionZone, updateMotionZone, deleteMotionZone } from "@/lib/api"
+import { deleteCamera, saveBarrierCheckZone, deleteBarrierCheckZone, saveZones, saveCameraZones, toEventImageSrc, updateCamera, createMotionZone, updateMotionZone, deleteMotionZone, listZoneGroups } from "@/lib/api"
 import { useDashboard } from "@/hooks/use-dashboard"
-import type { Barrier, BarrierZone, Camera, DetectionZone, MotionZone } from "@/lib/types"
+import type { Barrier, BarrierZone, Camera, DetectionZone, MotionZone, ZoneGroup } from "@/lib/types"
 
 function formatTime(value: string | null | undefined) {
   if (!value) {
@@ -36,6 +36,7 @@ export default function Page() {
   const { data, preview, previewImageSrc, cameras, loading, error, refreshing, isStale, syncAgeSec, refresh, runForceSync } =
     useDashboard(selectedCameraId)
   const [groupsPanelOpen, setGroupsPanelOpen] = useState(false)
+  const [zoneGroups, setZoneGroups] = useState<ZoneGroup[]>([])
   const [historyPanelOpen, setHistoryPanelOpen] = useState(false)
   const [barriersPanelOpen, setBarriersPanelOpen] = useState(false)
   const [whitelistPanelOpen, setWhitelistPanelOpen] = useState(false)
@@ -73,6 +74,10 @@ export default function Page() {
     }
     return map
   }, [preview?.barrier_zones])
+
+  useEffect(() => {
+    listZoneGroups().then(setZoneGroups).catch(() => setZoneGroups([]))
+  }, [])
 
   // Set default camera on first load
   useEffect(() => {
@@ -534,7 +539,7 @@ export default function Page() {
               zonesSaving={zonesSaving}
               zonesMessage={zonesMessage}
               cameraId={selectedCameraId}
-              cameraGroupId={selectedCamera?.group_id ?? null}
+              zoneGroups={zoneGroups}
               barriers={barriers}
               onChangeZones={(zones) => {
                 setZoneDraft(zones)
@@ -623,7 +628,10 @@ export default function Page() {
       )}
 
       {groupsPanelOpen && (
-        <CameraGroupsPanel onClose={() => setGroupsPanelOpen(false)} />
+        <CameraGroupsPanel onClose={() => {
+          setGroupsPanelOpen(false)
+          listZoneGroups().then(setZoneGroups).catch(() => setZoneGroups([]))
+        }} />
       )}
 
       {historyPanelOpen && (

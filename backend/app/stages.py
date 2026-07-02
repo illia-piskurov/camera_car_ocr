@@ -62,6 +62,11 @@ def evaluate_decision(
         return False, "not_whitelisted"
 
     cross_max_dist = cfg.fuzzy_edit_max_distance if cfg.fuzzy_edit_enabled else 0
+
+    if zone_id is not None and db.is_zone_group_suppressed(plate=plate, zone_id=zone_id, max_distance=cross_max_dist):
+        LOG.info("Zone group suppressed: plate=%s zone_id=%s", plate, zone_id)
+        return False, "zone_group_suppressed"
+
     if camera_id is not None and db.is_cross_camera_suppressed(plate=plate, camera_id=camera_id, zone_id=zone_id, max_distance=cross_max_dist):
         LOG.info("Cross-camera suppressed: plate=%s camera_id=%s zone_id=%s", plate, camera_id, zone_id)
         return False, "cross_camera_suppressed"

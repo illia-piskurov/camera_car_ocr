@@ -15,6 +15,7 @@ import type {
     SystemStatus,
     WhitelistEntry,
     WhitelistPage,
+    ZoneGroup,
     ZonesResponse,
 } from "@/lib/types"
 
@@ -307,7 +308,7 @@ export async function createBarrier(payload: { name: string; ha_open_entity_id: 
     return data.barrier
 }
 
-export async function updateBarrier(barrierId: number, payload: { name?: string; ha_open_entity_id?: string; ha_close_entity_id?: string; state_check_enabled?: boolean; state_threshold?: number }): Promise<Barrier> {
+export async function updateBarrier(barrierId: number, payload: { name?: string; ha_open_entity_id?: string; ha_close_entity_id?: string; ha_open_sensor_id?: string; ha_close_sensor_id?: string; state_check_enabled?: boolean; state_threshold?: number }): Promise<Barrier> {
     const response = await fetch(`${API_BASE}/api/barriers/${barrierId}`, {
         method: "PUT",
         cache: "no-store",
@@ -456,6 +457,45 @@ export async function fetchSystemStatus(signal?: AbortSignal): Promise<SystemSta
     const response = await fetch(`${API_BASE}/api/status`, { cache: "no-store", signal })
     if (!response.ok) throw new Error(`Status request failed: ${response.status}`)
     return (await response.json()) as SystemStatus
+}
+
+export async function listZoneGroups(signal?: AbortSignal): Promise<ZoneGroup[]> {
+    const response = await fetch(`${API_BASE}/api/zone-groups`, { cache: "no-store", signal })
+    if (!response.ok) throw new Error(`List zone groups failed: ${response.status}`)
+    const data = (await response.json()) as { zone_groups: ZoneGroup[] }
+    return data.zone_groups
+}
+
+export async function createZoneGroup(payload: { name: string; suppress_sec: number }): Promise<ZoneGroup> {
+    const response = await fetch(`${API_BASE}/api/zone-groups`, {
+        method: "POST",
+        cache: "no-store",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+    })
+    if (!response.ok) throw new Error(`Create zone group failed: ${response.status}`)
+    const data = (await response.json()) as { zone_group: ZoneGroup }
+    return data.zone_group
+}
+
+export async function updateZoneGroup(groupId: number, payload: { name?: string; suppress_sec?: number }): Promise<ZoneGroup> {
+    const response = await fetch(`${API_BASE}/api/zone-groups/${groupId}`, {
+        method: "PUT",
+        cache: "no-store",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+    })
+    if (!response.ok) throw new Error(`Update zone group failed: ${response.status}`)
+    const data = (await response.json()) as { zone_group: ZoneGroup }
+    return data.zone_group
+}
+
+export async function deleteZoneGroup(groupId: number): Promise<void> {
+    const response = await fetch(`${API_BASE}/api/zone-groups/${groupId}`, {
+        method: "DELETE",
+        cache: "no-store",
+    })
+    if (!response.ok) throw new Error(`Delete zone group failed: ${response.status}`)
 }
 
 export async function listWhitelist(params: { search?: string; offset?: number; limit?: number } = {}): Promise<WhitelistPage> {

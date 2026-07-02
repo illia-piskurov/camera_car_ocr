@@ -74,6 +74,12 @@ def sanitize_zone(raw: dict[str, object], default_name: str) -> dict[str, object
         result["barrier_id"] = raw["barrier_id"]
     if "camera_id" in raw:
         result["camera_id"] = raw["camera_id"]
+    if "zone_group_id" in raw:
+        result["zone_group_id"] = raw["zone_group_id"]
+    if "cross_camera_enabled" in raw:
+        result["cross_camera_enabled"] = raw["cross_camera_enabled"]
+    if "cross_zone_id" in raw:
+        result["cross_zone_id"] = raw["cross_zone_id"]
     return result
 
 

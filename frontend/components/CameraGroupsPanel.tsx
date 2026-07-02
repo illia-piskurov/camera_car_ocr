@@ -3,8 +3,8 @@
 import { useEffect, useState } from "react"
 import { PencilLine, Plus, Trash2, X, Check } from "lucide-react"
 import { Button } from "@/components/ui/button"
-import { listCameraGroups, createCameraGroup, updateCameraGroup, deleteCameraGroup } from "@/lib/api"
-import type { CameraGroup } from "@/lib/types"
+import { listZoneGroups, createZoneGroup, updateZoneGroup, deleteZoneGroup } from "@/lib/api"
+import type { ZoneGroup } from "@/lib/types"
 
 interface CameraGroupsPanelProps {
     onClose: () => void
@@ -17,7 +17,7 @@ function formatSuppressTime(sec: number): string {
 }
 
 export function CameraGroupsPanel({ onClose }: CameraGroupsPanelProps) {
-    const [groups, setGroups] = useState<CameraGroup[]>([])
+    const [groups, setGroups] = useState<ZoneGroup[]>([])
     const [loading, setLoading] = useState(true)
     const [error, setError] = useState<string | null>(null)
 
@@ -38,7 +38,7 @@ export function CameraGroupsPanel({ onClose }: CameraGroupsPanelProps) {
         setLoading(true)
         setError(null)
         try {
-            setGroups(await listCameraGroups())
+            setGroups(await listZoneGroups())
         } catch (e) {
             setError(e instanceof Error ? e.message : "Failed to load groups")
         } finally {
@@ -48,10 +48,10 @@ export function CameraGroupsPanel({ onClose }: CameraGroupsPanelProps) {
 
     useEffect(() => { void load() }, [])
 
-    function startEdit(group: CameraGroup) {
+    function startEdit(group: ZoneGroup) {
         setEditingId(group.id)
         setEditName(group.name)
-        setEditSuppress(String(group.cross_suppress_sec))
+        setEditSuppress(String(group.suppress_sec))
         setDeletingId(null)
     }
 
@@ -63,9 +63,9 @@ export function CameraGroupsPanel({ onClose }: CameraGroupsPanelProps) {
         if (!editingId) return
         setEditBusy(true)
         try {
-            await updateCameraGroup(editingId, {
+            await updateZoneGroup(editingId, {
                 name: editName.trim(),
-                cross_suppress_sec: parseInt(editSuppress) || 120,
+                suppress_sec: parseInt(editSuppress) || 120,
             })
             setEditingId(null)
             await load()
@@ -79,7 +79,7 @@ export function CameraGroupsPanel({ onClose }: CameraGroupsPanelProps) {
     async function confirmDelete(groupId: number) {
         setDeleteBusy(true)
         try {
-            await deleteCameraGroup(groupId)
+            await deleteZoneGroup(groupId)
             setDeletingId(null)
             await load()
         } catch (e) {
@@ -94,9 +94,9 @@ export function CameraGroupsPanel({ onClose }: CameraGroupsPanelProps) {
         setCreateBusy(true)
         setError(null)
         try {
-            await createCameraGroup({
+            await createZoneGroup({
                 name: createName.trim(),
-                cross_suppress_sec: parseInt(createSuppress) || 120,
+                suppress_sec: parseInt(createSuppress) || 120,
             })
             setCreateName("")
             setCreateSuppress("120")
@@ -115,9 +115,9 @@ export function CameraGroupsPanel({ onClose }: CameraGroupsPanelProps) {
                 {/* Header */}
                 <div className="flex items-center justify-between border-b border-slate-700/80 px-6 py-4">
                     <div>
-                        <h2 className="text-lg font-semibold text-slate-100">Camera Groups</h2>
+                        <h2 className="text-lg font-semibold text-slate-100">Zone Groups</h2>
                         <p className="mt-0.5 text-xs text-slate-400">
-                            Cameras in the same group suppress duplicate opens across each other.
+                            Zones in the same group suppress each other for the same plate.
                         </p>
                     </div>
                     <button
@@ -139,7 +139,7 @@ export function CameraGroupsPanel({ onClose }: CameraGroupsPanelProps) {
                     {loading ? (
                         <p className="text-sm text-slate-400">Loading...</p>
                     ) : groups.length === 0 && !showCreate ? (
-                        <p className="text-sm italic text-slate-500">No groups yet. Create one to link cameras.</p>
+                        <p className="text-sm italic text-slate-500">No zone groups yet. Create one to group zones.</p>
                     ) : (
                         <ul className="space-y-2">
                             {groups.map((group) => (
@@ -181,7 +181,7 @@ export function CameraGroupsPanel({ onClose }: CameraGroupsPanelProps) {
                                         <div>
                                             <p className="text-sm text-slate-200">
                                                 Delete <span className="font-semibold">{group.name}</span>?
-                                                Cameras in this group will be unassigned.
+                                                Zones in this group will be unassigned.
                                             </p>
                                             <div className="mt-2 flex gap-2">
                                                 <Button
@@ -202,7 +202,7 @@ export function CameraGroupsPanel({ onClose }: CameraGroupsPanelProps) {
                                             <div>
                                                 <p className="text-sm font-medium text-slate-200">{group.name}</p>
                                                 <p className="text-xs text-slate-400">
-                                                    Suppress window: {formatSuppressTime(group.cross_suppress_sec)}
+                                                    Suppress window: {formatSuppressTime(group.suppress_sec)}
                                                 </p>
                                             </div>
                                             <div className="flex gap-1.5">
