@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useMemo, useState } from "react"
+import { useEffect, useState } from "react"
 
 import { Button } from "@/components/ui/button"
 import { ControlRoomHeader } from "@/components/ControlRoomHeader"
@@ -14,9 +14,9 @@ import { EventsTable } from "@/components/EventsTable"
 import { OnboardingPanel } from "@/components/OnboardingPanel"
 import { WhitelistPanel } from "@/components/WhitelistPanel"
 import { StatusPanel } from "@/components/StatusPanel"
-import { deleteCamera, saveBarrierCheckZone, deleteBarrierCheckZone, saveZones, saveCameraZones, toEventImageSrc, updateCamera, createMotionZone, updateMotionZone, deleteMotionZone, listZoneGroups } from "@/lib/api"
+import { deleteCamera, saveZones, saveCameraZones, toEventImageSrc, updateCamera, createMotionZone, updateMotionZone, deleteMotionZone, listZoneGroups } from "@/lib/api"
 import { useDashboard } from "@/hooks/use-dashboard"
-import type { Barrier, BarrierZone, Camera, DetectionZone, MotionZone, ZoneGroup } from "@/lib/types"
+import type { Barrier, Camera, DetectionZone, MotionZone, ZoneGroup } from "@/lib/types"
 
 function formatTime(value: string | null | undefined) {
   if (!value) {
@@ -56,24 +56,7 @@ export default function Page() {
   const [activeMotionZoneSaving, setActiveMotionZoneSaving] = useState(false)
   const [activeMotionZoneMessage, setActiveMotionZoneMessage] = useState<string | null>(null)
 
-  // Per-barrier check zone state
-  const [activeCheckBarrierId, setActiveCheckBarrierId] = useState<number | null>(null)
-  const [activeCheckZoneSaved, setActiveCheckZoneSaved] = useState<BarrierZone | null>(null)
-  const [activeCheckZoneDraft, setActiveCheckZoneDraft] = useState<BarrierZone | null>(null)
-  const [activeCheckZoneDirty, setActiveCheckZoneDirty] = useState(false)
-  const [activeCheckZoneSaving, setActiveCheckZoneSaving] = useState(false)
-  const [activeCheckZoneMessage, setActiveCheckZoneMessage] = useState<string | null>(null)
-
   const barriers: Barrier[] = preview?.barriers ?? []
-
-  // Map barrier_id → BarrierZone for current camera (from preview)
-  const barrierCheckZoneMap = useMemo(() => {
-    const map: Record<number, BarrierZone> = {}
-    for (const bz of preview?.barrier_zones ?? []) {
-      if (bz.barrier_id != null) map[bz.barrier_id] = bz
-    }
-    return map
-  }, [preview?.barrier_zones])
 
   useEffect(() => {
     listZoneGroups().then(setZoneGroups).catch(() => setZoneGroups([]))
@@ -91,11 +74,6 @@ export default function Page() {
   useEffect(() => {
     setZonesDirty(false)
     setZonesMessage(null)
-    setActiveCheckBarrierId(null)
-    setActiveCheckZoneSaved(null)
-    setActiveCheckZoneDraft(null)
-    setActiveCheckZoneDirty(false)
-    setActiveCheckZoneMessage(null)
     setActiveMotionZone(null)
     setActiveMotionZoneSaved(null)
     setActiveMotionZoneBarrierId(null)
@@ -118,26 +96,10 @@ export default function Page() {
     }
   }, [preview, zonesDirty])
 
-  // Sync active check zone from preview when not dirty
-  useEffect(() => {
-    if (!activeCheckZoneDirty && activeCheckBarrierId !== null) {
-      const saved = barrierCheckZoneMap[activeCheckBarrierId] ?? null
-      setActiveCheckZoneSaved(saved)
-      setActiveCheckZoneDraft(saved)
-    }
-  }, [barrierCheckZoneMap, activeCheckZoneDirty, activeCheckBarrierId])
-
   const selectedEvent = data?.recent_events.find((event) => event.id === selectedEventId) ?? null
   const selectedImageSrc = selectedEventId !== null ? toEventImageSrc(selectedEventId) : null
   const maxZones = preview?.max_zones ?? 2
   const selectedCamera = cameras.find((camera) => camera.id === selectedCameraId) ?? null
-
-  // Barrier check zones for the preview — all except the active (editable) one
-  const otherBarrierZones = useMemo(() => {
-    return (preview?.barrier_zones ?? []).filter(
-      (bz) => bz.barrier_id !== activeCheckBarrierId
-    )
-  }, [preview?.barrier_zones, activeCheckBarrierId])
 
   async function handleCameraSaved(camera: Camera) {
     setCameraFormMode(null)
@@ -270,93 +232,6 @@ export default function Page() {
     setZoneDraft(updated)
     setZonesDirty(true)
     setZonesMessage(null)
-  }
-
-  function handleSelectCheckBarrier(barrierId: number | null) {
-    setActiveCheckBarrierId(barrierId)
-    setActiveCheckZoneDirty(false)
-    setActiveCheckZoneMessage(null)
-    if (barrierId !== null) {
-      const saved = barrierCheckZoneMap[barrierId] ?? null
-      setActiveCheckZoneSaved(saved)
-      setActiveCheckZoneDraft(saved)
-    } else {
-      setActiveCheckZoneSaved(null)
-      setActiveCheckZoneDraft(null)
-    }
-  }
-
-  function handleSetCheckZone() {
-    if (activeCheckBarrierId === null) return
-    const draft: BarrierZone = {
-      id: -1,
-      barrier_id: activeCheckBarrierId,
-      camera_id: selectedCameraId,
-      x_min: 0.3,
-      y_min: 0.2,
-      x_max: 0.7,
-      y_max: 0.8,
-      rotation: 0,
-      zone_type: "barrier_check",
-    }
-    setActiveCheckZoneDraft(draft)
-    setActiveCheckZoneDirty(true)
-    setActiveCheckZoneMessage(null)
-  }
-
-  function handleChangeActiveBarrierZone(zone: BarrierZone) {
-    setActiveCheckZoneDraft(zone)
-    setActiveCheckZoneDirty(true)
-    setActiveCheckZoneMessage(null)
-  }
-
-  async function handleSaveCheckZone() {
-    if (activeCheckBarrierId === null || !activeCheckZoneDraft) return
-    setActiveCheckZoneSaving(true)
-    setActiveCheckZoneMessage(null)
-    try {
-      const saved = await saveBarrierCheckZone(activeCheckBarrierId, {
-        camera_id: selectedCameraId,
-        x_min: activeCheckZoneDraft.x_min,
-        y_min: activeCheckZoneDraft.y_min,
-        x_max: activeCheckZoneDraft.x_max,
-        y_max: activeCheckZoneDraft.y_max,
-        rotation: activeCheckZoneDraft.rotation,
-      })
-      setActiveCheckZoneSaved(saved)
-      setActiveCheckZoneDraft(saved)
-      setActiveCheckZoneDirty(false)
-      setActiveCheckZoneMessage("Check zone saved")
-      await refresh()
-    } catch (err) {
-      setActiveCheckZoneMessage(err instanceof Error ? err.message : "Failed to save check zone")
-    } finally {
-      setActiveCheckZoneSaving(false)
-    }
-  }
-
-  async function handleDeleteCheckZone() {
-    if (activeCheckBarrierId === null) return
-    setActiveCheckZoneSaving(true)
-    setActiveCheckZoneMessage(null)
-    try {
-      await deleteBarrierCheckZone(activeCheckBarrierId)
-      setActiveCheckZoneSaved(null)
-      setActiveCheckZoneDraft(null)
-      setActiveCheckZoneDirty(false)
-      setActiveCheckZoneMessage("Check zone deleted")
-      await refresh()
-    } catch (err) {
-      setActiveCheckZoneMessage(err instanceof Error ? err.message : "Failed to delete check zone")
-    } finally {
-      setActiveCheckZoneSaving(false)
-    }
-  }
-
-  function handleResetCheckZone() {
-    setActiveCheckZoneDraft(activeCheckZoneSaved)
-    setActiveCheckZoneDirty(false)
-    setActiveCheckZoneMessage(null)
   }
 
   // Motion zone handlers
@@ -503,9 +378,6 @@ export default function Page() {
                 setZonesDirty(true)
                 setZonesMessage(null)
               }}
-              barrierZones={otherBarrierZones}
-              activeBarrierZone={activeCheckZoneDraft}
-              onChangeActiveBarrierZone={handleChangeActiveBarrierZone}
               motionZones={motionZones}
               activeMotionZone={activeMotionZone}
               onChangeActiveMotionZone={handleChangeActiveMotionZone}
@@ -551,16 +423,6 @@ export default function Page() {
               onUpdateZone={handleUpdateZone}
               onRemoveZone={handleRemoveZone}
               onOpenBarriers={() => setBarriersPanelOpen(true)}
-              activeCheckBarrierId={activeCheckBarrierId}
-              activeCheckZone={activeCheckZoneDraft}
-              activeCheckZoneDirty={activeCheckZoneDirty}
-              activeCheckZoneSaving={activeCheckZoneSaving}
-              activeCheckZoneMessage={activeCheckZoneMessage}
-              onSelectCheckBarrier={handleSelectCheckBarrier}
-              onSetCheckZone={handleSetCheckZone}
-              onSaveCheckZone={() => void handleSaveCheckZone()}
-              onDeleteCheckZone={() => void handleDeleteCheckZone()}
-              onResetCheckZone={handleResetCheckZone}
               motionZones={motionZones}
               activeMotionZone={activeMotionZone}
               activeMotionZoneBarrierId={activeMotionZoneBarrierId}

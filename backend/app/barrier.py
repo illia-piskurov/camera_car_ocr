@@ -7,6 +7,10 @@ import httpx
 
 LOG = logging.getLogger(__name__)
 
+OPEN = "open"
+CLOSED = "closed"
+UNKNOWN = "unknown"
+
 
 class BarrierController:
     def __init__(
@@ -47,6 +51,13 @@ class BarrierController:
                 "Barrier action mode is live but HA settings are incomplete. Falling back to mock mode"
             )
             self._enabled_live = False
+
+        # Reused across requests instead of opening a fresh TCP/TLS connection per call.
+        self._client = httpx.Client(timeout=self.timeout_sec, verify=self.verify_tls)
+
+    def close_client(self) -> None:
+        """Close the underlying HTTP client (not a barrier action — see close() below)."""
+        self._client.close()
 
     def _is_live_configured(self) -> bool:
         if not self.ha_base_url or not self.ha_token:
@@ -137,10 +148,9 @@ class BarrierController:
                     zone_id if zone_id is not None else "full",
                     url,
                 )
-                with httpx.Client(timeout=self.timeout_sec, verify=self.verify_tls) as client:
-                    response = client.post(url, headers=headers, json=payload)
-                    response.raise_for_status()
-                    body = (response.text or "").strip()[:1000]
+                response = self._client.post(url, headers=headers, json=payload)
+                response.raise_for_status()
+                body = (response.text or "").strip()[:1000]
                 LOG.info(
                     "Barrier %s executed entity_id=%s plate=%s reason=%s zone=%s response=%s",
                     action,
@@ -214,11 +224,10 @@ class BarrierController:
         url = f"{self.ha_base_url}/api/states/{entity_id}"
         headers = {"Authorization": f"Bearer {self.ha_token}"}
         try:
-            with httpx.Client(timeout=self.timeout_sec, verify=self.verify_tls) as client:
-                response = client.get(url, headers=headers)
-                response.raise_for_status()
-                data = response.json()
-                return str(data.get("state", "")).lower()
+            response = self._client.get(url, headers=headers)
+            response.raise_for_status()
+            data = response.json()
+            return str(data.get("state", "")).lower()
         except Exception as exc:  # noqa: BLE001
             LOG.warning("Failed to get sensor state entity_id=%s error=%s", entity_id, exc)
             return None
@@ -234,7 +243,6 @@ class BarrierController:
         Returns 'open', 'closed', or None if state cannot be determined.
         Open sensor takes priority: if it reads 'on' the barrier is open.
         """
-        from .barrier_state import OPEN, CLOSED
         if open_sensor_id:
             state = self.get_sensor_state(open_sensor_id)
             if state == "on":

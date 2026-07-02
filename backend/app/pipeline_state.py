@@ -11,6 +11,7 @@ import time
 from dataclasses import dataclass, field
 from typing import Any
 
+from .barrier import CLOSED as BS_CLOSED
 from .barrier import BarrierController
 from .runtime_state import ZoneRuntimeState
 
@@ -29,6 +30,9 @@ class PipelineState:
     last_preview_write_ts: float = 0.0
     last_no_zone_warning_ts: float = 0.0
     prev_frame: Any = None  # np.ndarray | None — kept for motion detection
+    # Cached HA barrier-sensor states, refreshed on a throttle instead of every frame poll.
+    cached_barrier_states: dict[int, str] = field(default_factory=dict)
+    last_barrier_state_check_ts: float = 0.0
     # Suppress repeated deny/observed events for same plate+zone
     _deny_ts: dict[tuple[str, int | None], float] = field(default_factory=dict)
     _observed_ts: dict[tuple[str, int | None], float] = field(default_factory=dict)
@@ -73,8 +77,6 @@ class PipelineState:
         barrier_states: mapping of barrier_id → detected state string.
           If state is CLOSED — skip close (already closed, toggle would open).
         """
-        from .barrier_state import CLOSED as BS_CLOSED
-
         now_monotonic = time.monotonic()
         closed_entities: set[str] = set()
 
@@ -96,7 +98,7 @@ class PipelineState:
             barrier_state = barrier_states.get(bid) if (barrier_states and bid is not None) else None
             if barrier_state == BS_CLOSED:
                 LOG.info(
-                    "Barrier close skipped (camera: already closed) plate=%s zone=%s barrier=%s",
+                    "Barrier close skipped (sensor: already closed) plate=%s zone=%s barrier=%s",
                     state.last_plate,
                     zone_id if zone_id is not None else "full",
                     bid,

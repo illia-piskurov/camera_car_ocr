@@ -10,6 +10,7 @@ import time
 
 from .config import Settings
 from .db import Database
+from .barrier import OPEN as BS_OPEN
 from .barrier import BarrierController
 from .fuzzy_edit import find_best_edit_match
 from .runtime_state import ZoneRuntimeState
@@ -141,8 +142,6 @@ def execute_barrier_action(
         )
         return
 
-    from .barrier_state import OPEN as BS_OPEN
-
     zone_id = detection.zone_id
     plate = detection.normalized_text
 
@@ -159,11 +158,11 @@ def execute_barrier_action(
         )
         return
 
-    # Skip open if camera confirms barrier is already open — sending the pulse
+    # Skip open if the HA sensor confirms barrier is already open — sending the pulse
     # would toggle it closed on impulse/toggle-type barriers.
     if barrier_state == BS_OPEN:
         LOG.info(
-            "Barrier open skipped (camera: already open) plate=%s zone=%s reason=%s",
+            "Barrier open skipped (sensor: already open) plate=%s zone=%s reason=%s",
             plate,
             zone_id if zone_id is not None else "full",
             reason_code,

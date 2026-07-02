@@ -158,7 +158,7 @@ def _select_best_detection(
     detections: list[PlateDetection],
     min_ocr_confidence: float,
 ) -> PlateDetection | None:
-    """Select the best detection from a single frame based on OCR confidence.
+    """Select the best detection from a list based on OCR confidence.
 
     Prefers high-confidence detections and returns the one with the highest
     confidence that meets the minimum threshold. Returns None if no detections
@@ -176,10 +176,36 @@ def _select_best_detection(
     return max(qualified, key=lambda d: d.ocr_confidence)
 
 
+def _select_best_per_zone(
+    *,
+    detections: list[PlateDetection],
+    min_ocr_confidence: float,
+) -> dict[int | None, PlateDetection]:
+    """Select the best qualifying detection independently for each zone.
+
+    A single frame can contain multiple vehicles in different detection zones
+    (e.g. one camera watching two lanes that open different barriers). Picking a
+    single best detection across the whole frame would let one zone's detection
+    crowd out another's every cycle, so this groups by zone_id first and selects
+    a winner within each group — every zone with a qualifying detection gets its
+    own decision this frame.
+    """
+    by_zone: dict[int | None, list[PlateDetection]] = {}
+    for detection in detections:
+        by_zone.setdefault(detection.zone_id, []).append(detection)
+
+    winners: dict[int | None, PlateDetection] = {}
+    for zone_id, zone_detections in by_zone.items():
+        best = _select_best_detection(detections=zone_detections, min_ocr_confidence=min_ocr_confidence)
+        if best is not None:
+            winners[zone_id] = best
+    return winners
+
+
 def _handle_detections(
     *,
     detections: list[PlateDetection],
-    decision_detection: PlateDetection | None,
+    decision_detections: dict[int | None, PlateDetection],
     db: Database,
     cfg: Settings,
     barrier: BarrierController,
@@ -215,67 +241,74 @@ def _handle_detections(
             state.mark_observed(plate, detection.zone_id)
             zones_written.add(detection.zone_id)
 
-    if decision_detection is None:
+    if not decision_detections:
         for zid in zones_written:
             state.mark_zone_event(zid)
         return result
 
-    should_open, reason_code = stages.evaluate_decision(
-        plate=decision_detection.normalized_text,
-        fuzzy_plate=decision_detection.fuzzy_text,
-        ocr_confidence=decision_detection.ocr_confidence,
-        camera_id=camera_id,
-        zone_id=decision_detection.zone_id,
-        db=db,
-        cfg=cfg,
-    )
-
-    result.frame_last_decision = "open" if should_open else "deny"
-    result.frame_last_plate = decision_detection.normalized_text
-    result.frame_last_reason = reason_code
-    result.frame_last_zone = decision_detection.zone_name
-    result.snapshot_source_detection = decision_detection
-
-    plate = decision_detection.normalized_text
-    zone_id = decision_detection.zone_id
-
-    # Open events always bypass zone cooldown — a whitelisted plate must never be blocked.
-    # Deny events are suppressed both by zone cooldown and by the per-plate 5-min suppress.
-    if should_open or (
-        not state.is_zone_in_cooldown(zone_id)
-        and not state.is_deny_suppressed(plate, zone_id)
-    ):
-        stages.record_decision_event(
-            detection=decision_detection,
-            decision=result.frame_last_decision,
-            reason_code=reason_code,
-            db=db,
+    # Evaluate and act on each zone's winning detection independently, so that
+    # simultaneous vehicles in different zones can each open their own barrier
+    # in the same polling cycle instead of only one zone getting a real decision.
+    for zone_id, decision_detection in decision_detections.items():
+        should_open, reason_code = stages.evaluate_decision(
+            plate=decision_detection.normalized_text,
+            fuzzy_plate=decision_detection.fuzzy_text,
+            ocr_confidence=decision_detection.ocr_confidence,
             camera_id=camera_id,
-        )
-        if not should_open:
-            state.mark_deny(plate, zone_id)
-        zones_written.add(zone_id)
-
-        zone_bid = zone_barrier_ids.get(zone_id) if zone_barrier_ids else None
-        zone_barrier_state = barrier_states.get(zone_bid) if (barrier_states and zone_bid is not None) else None
-        stages.execute_barrier_action(
-            should_open=should_open,
-            detection=decision_detection,
-            reason_code=reason_code,
-            barrier=barrier,
+            zone_id=decision_detection.zone_id,
+            db=db,
             cfg=cfg,
-            zone_states=state.zone_states,
-            barrier_state=zone_barrier_state,
         )
 
-    LOG.info(
-        "Decision plate=%s ocr_conf=%.3f decision=%s reason=%s zone_cooldown=%s",
-        decision_detection.normalized_text,
-        decision_detection.ocr_confidence,
-        result.frame_last_decision,
-        reason_code,
-        state.is_zone_in_cooldown(zone_id),
-    )
+        zone_decision = "open" if should_open else "deny"
+        plate = decision_detection.normalized_text
+
+        # Open events always bypass zone cooldown — a whitelisted plate must never be blocked.
+        # Deny events are suppressed both by zone cooldown and by the per-plate 5-min suppress.
+        if should_open or (
+            not state.is_zone_in_cooldown(zone_id)
+            and not state.is_deny_suppressed(plate, zone_id)
+        ):
+            stages.record_decision_event(
+                detection=decision_detection,
+                decision=zone_decision,
+                reason_code=reason_code,
+                db=db,
+                camera_id=camera_id,
+            )
+            if not should_open:
+                state.mark_deny(plate, zone_id)
+            zones_written.add(zone_id)
+
+            zone_bid = zone_barrier_ids.get(zone_id) if zone_barrier_ids else None
+            zone_barrier_state = barrier_states.get(zone_bid) if (barrier_states and zone_bid is not None) else None
+            stages.execute_barrier_action(
+                should_open=should_open,
+                detection=decision_detection,
+                reason_code=reason_code,
+                barrier=barrier,
+                cfg=cfg,
+                zone_states=state.zone_states,
+                barrier_state=zone_barrier_state,
+            )
+
+            LOG.info(
+                "Decision plate=%s ocr_conf=%.3f decision=%s reason=%s zone_cooldown=%s",
+                decision_detection.normalized_text,
+                decision_detection.ocr_confidence,
+                zone_decision,
+                reason_code,
+                state.is_zone_in_cooldown(zone_id),
+            )
+
+            # Surface an "open" decision preferentially in the frame-level preview
+            # summary; otherwise report the last processed zone's outcome.
+            if result.frame_last_decision is None or should_open:
+                result.frame_last_decision = zone_decision
+                result.frame_last_plate = decision_detection.normalized_text
+                result.frame_last_reason = reason_code
+                result.frame_last_zone = decision_detection.zone_name
+                result.snapshot_source_detection = decision_detection
 
     for zid in zones_written:
         state.mark_zone_event(zid)
@@ -439,8 +472,11 @@ def _snapshot_stage(
             if zone_image is None:
                 zone_image = crop_zone(frame, selected_zone)
 
+            # Reuse the detections already computed by _detect_in_zones instead of
+            # re-running detector+OCR inference just to draw the overlay box.
+            zone_detections = [d for d in detections if d.zone_id == detection_for_snapshot.zone_id]
             try:
-                annotated_zone_image, _ = alpr.draw_predictions(zone_image)
+                annotated_zone_image = alpr.draw_detections(zone_image, zone_detections)
                 snapshot_frame = paste_zone_image(snapshot_frame, selected_zone, annotated_zone_image)
             except (ValueError, RuntimeError) as exc:
                 LOG.warning("Failed to annotate zone snapshot: %s", exc)
@@ -456,8 +492,6 @@ def _snapshot_stage(
             decision=detection_result.frame_last_decision,
             reason_code=detection_result.frame_last_reason or "raw_detection",
             zone_name=detection_for_snapshot.zone_name,
-            # No zone overlays on saved snapshots — they corrupt barrier-zone crops
-            # used for calibration model training. Preview draws zones separately.
             apply_alpr_predictions=apply_alpr_predictions,
             output_dir=cfg.recognition_snapshot_dir,
             jpeg_quality=cfg.recognition_snapshot_jpeg_quality,
@@ -586,29 +620,31 @@ def _poll_single_camera(
 
     now_monotonic = time.monotonic()
 
-    # Barrier state check via HA binary sensors (runs before handle_detections)
-    barrier_states: dict[int, str] = {}  # barrier_id → "open" / "closed"
-    _barriers_for_state = {int(b["id"]): b for b in db.list_barriers()}
-    for bid, b_cfg in _barriers_for_state.items():
-        if not b_cfg.get("state_check_enabled"):
-            continue
-        open_sensor = str(b_cfg.get("ha_open_sensor_id") or "")
-        close_sensor = str(b_cfg.get("ha_close_sensor_id") or "")
-        if not open_sensor and not close_sensor:
-            continue
-        state_val = barrier.get_barrier_sensor_state(
-            open_sensor_id=open_sensor,
-            close_sensor_id=close_sensor,
-        )
-        if state_val is not None:
-            barrier_states[bid] = state_val
-            db.update_barrier_live_state(bid, state_val)
-            LOG.debug("Barrier state (sensor) barrier=%s state=%s", bid, state_val)
+    # Barrier state check via HA binary sensors (runs before handle_detections).
+    # Throttled — HA sensor state doesn't need to be re-polled every single frame.
+    if now_monotonic - state.last_barrier_state_check_ts >= cfg.barrier_state_poll_interval_sec:
+        state.last_barrier_state_check_ts = now_monotonic
+        _barriers_for_state = {int(b["id"]): b for b in db.list_barriers()}
+        for bid, b_cfg in _barriers_for_state.items():
+            if not b_cfg.get("state_check_enabled"):
+                continue
+            open_sensor = str(b_cfg.get("ha_open_sensor_id") or "")
+            close_sensor = str(b_cfg.get("ha_close_sensor_id") or "")
+            if not open_sensor and not close_sensor:
+                continue
+            state_val = barrier.get_barrier_sensor_state(
+                open_sensor_id=open_sensor,
+                close_sensor_id=close_sensor,
+            )
+            if state_val is not None:
+                state.cached_barrier_states[bid] = state_val
+                db.update_barrier_live_state(bid, state_val)
+                LOG.debug("Barrier state (sensor) barrier=%s state=%s", bid, state_val)
+    barrier_states = state.cached_barrier_states
 
     # Detect plates in zones using single-shot detection
     detections: list[PlateDetection] = []
     zone_frames: dict[int, np.ndarray] = {}
-    decision_detection: PlateDetection | None = None
 
     detections, zone_frames = _detect_in_zones(
         frame=frame,
@@ -623,7 +659,9 @@ def _poll_single_camera(
         if cfg.fuzzy_edit_enabled
         else cfg.ocr_open_threshold
     )
-    decision_detection = _select_best_detection(
+    # One winning detection per zone — lets simultaneous vehicles in different
+    # zones each get a real decision in the same polling cycle.
+    decision_detections = _select_best_per_zone(
         detections=detections,
         min_ocr_confidence=min_ocr_conf,
     )
@@ -637,7 +675,7 @@ def _poll_single_camera(
     # Make decisions and act on detections
     detection_result = _handle_detections(
         detections=detections,
-        decision_detection=decision_detection,
+        decision_detections=decision_detections,
         db=db,
         cfg=cfg,
         barrier=barrier,
@@ -780,33 +818,45 @@ def run_camera_worker(camera_id: int, settings: Settings | None = None) -> None:
 
     LOG.info("Camera worker started for camera %s (id=%s)", camera_record.get("name"), camera_id)
 
+    # Camera/zone/barrier config rarely changes between polls (poll_interval_sec can be
+    # sub-second) — refresh it on a throttle instead of hitting the DB every single cycle.
+    current_camera: dict | None = None
+    current_zones: list[dict] = []
+    current_barrier_by_id: dict[int, dict] = {}
+    last_config_refresh_ts = 0.0
+
     try:
         while True:
-            current_camera = db.get_camera(camera_id)
-            if current_camera is None or not current_camera.get("is_active", False):
-                LOG.info("Camera %s became inactive; stopping worker", camera_id)
-                return
+            now_monotonic = time.monotonic()
+            if now_monotonic - last_config_refresh_ts >= cfg.camera_config_refresh_sec:
+                last_config_refresh_ts = now_monotonic
+                current_camera = db.get_camera(camera_id)
+                if current_camera is None or not current_camera.get("is_active", False):
+                    LOG.info("Camera %s became inactive; stopping worker", camera_id)
+                    return
 
-            current_zones = db.get_zones(include_disabled=True, camera_id=camera_id)
-            current_barriers = db.list_barriers()
-            current_barrier_by_id = {int(b["id"]): b for b in current_barriers}
+                current_zones = db.get_zones(include_disabled=True, camera_id=camera_id)
+                current_barriers = db.list_barriers()
+                current_barrier_by_id = {int(b["id"]): b for b in current_barriers}
 
-            def _cur_zone_entity(zone: dict, action: str) -> str:
-                bid = zone.get("barrier_id")
-                if bid is not None and int(bid) in current_barrier_by_id:
-                    return str(current_barrier_by_id[int(bid)].get(f"ha_{action}_entity_id") or "")
-                return str(zone.get(f"ha_{action}_entity_id") or "")
+                def _cur_zone_entity(zone: dict, action: str) -> str:
+                    bid = zone.get("barrier_id")
+                    if bid is not None and int(bid) in current_barrier_by_id:
+                        return str(current_barrier_by_id[int(bid)].get(f"ha_{action}_entity_id") or "")
+                    return str(zone.get(f"ha_{action}_entity_id") or "")
 
-            barrier.zone_open_entity_ids = {
-                int(z["id"]): _cur_zone_entity(z, "open")
-                for z in current_zones
-                if _cur_zone_entity(z, "open")
-            }
-            barrier.zone_close_entity_ids = {
-                int(z["id"]): _cur_zone_entity(z, "close")
-                for z in current_zones
-                if _cur_zone_entity(z, "close")
-            }
+                barrier.zone_open_entity_ids = {
+                    int(z["id"]): _cur_zone_entity(z, "open")
+                    for z in current_zones
+                    if _cur_zone_entity(z, "open")
+                }
+                barrier.zone_close_entity_ids = {
+                    int(z["id"]): _cur_zone_entity(z, "close")
+                    for z in current_zones
+                    if _cur_zone_entity(z, "close")
+                }
+
+            assert current_camera is not None
 
             try:
                 _poll_single_camera(
@@ -829,6 +879,10 @@ def run_camera_worker(camera_id: int, settings: Settings | None = None) -> None:
             camera.close()
         except Exception as exc:  # noqa: BLE001
             LOG.warning("Error closing camera client: %s", exc)
+        try:
+            barrier.close_client()
+        except Exception as exc:  # noqa: BLE001
+            LOG.warning("Error closing barrier client: %s", exc)
 
 
 def run(settings: Settings | None = None) -> None:

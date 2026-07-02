@@ -1,7 +1,5 @@
 import type {
     Barrier,
-    BarrierZone,
-    CalibrationData,
     Camera,
     CameraCreatePayload,
     CameraGroup,
@@ -308,7 +306,7 @@ export async function createBarrier(payload: { name: string; ha_open_entity_id: 
     return data.barrier
 }
 
-export async function updateBarrier(barrierId: number, payload: { name?: string; ha_open_entity_id?: string; ha_close_entity_id?: string; ha_open_sensor_id?: string; ha_close_sensor_id?: string; state_check_enabled?: boolean; state_threshold?: number }): Promise<Barrier> {
+export async function updateBarrier(barrierId: number, payload: { name?: string; ha_open_entity_id?: string; ha_close_entity_id?: string; ha_open_sensor_id?: string; ha_close_sensor_id?: string; state_check_enabled?: boolean }): Promise<Barrier> {
     const response = await fetch(`${API_BASE}/api/barriers/${barrierId}`, {
         method: "PUT",
         cache: "no-store",
@@ -326,86 +324,6 @@ export async function deleteBarrier(barrierId: number): Promise<void> {
         cache: "no-store",
     })
     if (!response.ok) throw new Error(`Delete barrier failed: ${response.status}`)
-}
-
-export async function saveBarrierCheckZone(
-    barrierId: number,
-    zone: { camera_id: number | null; name?: string; x_min: number; y_min: number; x_max: number; y_max: number; rotation?: number },
-): Promise<BarrierZone | null> {
-    const response = await fetch(`${API_BASE}/api/barriers/${barrierId}/check-zone`, {
-        method: "PUT",
-        cache: "no-store",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(zone),
-    })
-    if (!response.ok) throw new Error(`Save barrier check zone failed: ${response.status}`)
-    const data = (await response.json()) as { zone: BarrierZone | null }
-    return data.zone
-}
-
-export async function deleteBarrierCheckZone(barrierId: number): Promise<void> {
-    const response = await fetch(`${API_BASE}/api/barriers/${barrierId}/check-zone`, {
-        method: "DELETE",
-        cache: "no-store",
-    })
-    if (!response.ok) throw new Error(`Delete barrier check zone failed: ${response.status}`)
-}
-
-export async function getBarrierCalibration(barrierId: number, limit = 60): Promise<CalibrationData> {
-    const response = await fetch(`${API_BASE}/api/barriers/${barrierId}/calibration?limit=${limit}`, { cache: "no-store" })
-    if (!response.ok) throw new Error(`Get calibration failed: ${response.status}`)
-    return (await response.json()) as CalibrationData
-}
-
-export async function setCalibrationReference(barrierId: number, eventId: number): Promise<Barrier> {
-    const response = await fetch(`${API_BASE}/api/barriers/${barrierId}/calibration/reference`, {
-        method: "POST",
-        cache: "no-store",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ event_id: eventId }),
-    })
-    if (!response.ok) {
-        const text = await response.text()
-        throw new Error(`Set reference failed: ${text}`)
-    }
-    const data = (await response.json()) as { barrier: Barrier }
-    return data.barrier
-}
-
-export async function setCalibrationLabel(barrierId: number, eventId: number, label: "open" | "closed" | null): Promise<void> {
-    const response = await fetch(`${API_BASE}/api/barriers/${barrierId}/calibration/label`, {
-        method: "POST",
-        cache: "no-store",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ event_id: eventId, label }),
-    })
-    if (!response.ok) throw new Error(`Set label failed: ${response.status}`)
-}
-
-export async function applyBarrierCalibration(barrierId: number): Promise<{
-    threshold: number
-    diff_accuracy: number | null
-    model_accuracy: number | null
-    n_open: number
-    n_closed: number
-    n_total_labeled: number
-}> {
-    const response = await fetch(`${API_BASE}/api/barriers/${barrierId}/calibration/apply`, {
-        method: "POST",
-        cache: "no-store",
-    })
-    if (!response.ok) {
-        const text = await response.text()
-        throw new Error(`Apply calibration failed: ${text}`)
-    }
-    return (await response.json()) as {
-        threshold: number
-        diff_accuracy: number | null
-        model_accuracy: number | null
-        n_open: number
-        n_closed: number
-        n_total_labeled: number
-    }
 }
 
 export async function listMotionZones(cameraId: number): Promise<MotionZone[]> {
@@ -543,22 +461,3 @@ export async function deleteWhitelistPlate(id: number): Promise<void> {
     if (!response.ok) throw new Error(`Delete plate failed: ${response.status}`)
 }
 
-export async function clearBarrierCalibration(barrierId: number): Promise<void> {
-    const response = await fetch(`${API_BASE}/api/barriers/${barrierId}/calibration`, {
-        method: "DELETE",
-        cache: "no-store",
-    })
-    if (!response.ok) throw new Error(`Clear calibration failed: ${response.status}`)
-}
-
-export async function captureCalibrationFrames(barrierId: number, count: number): Promise<{ captured: { id: number; frame_id: string; occurred_at: string }[] }> {
-    const response = await fetch(`${API_BASE}/api/barriers/${barrierId}/calibration/capture?count=${count}`, {
-        method: "POST",
-        cache: "no-store",
-    })
-    if (!response.ok) {
-        const text = await response.text().catch(() => response.statusText)
-        throw new Error(`Capture failed: ${text}`)
-    }
-    return response.json()
-}

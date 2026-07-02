@@ -71,6 +71,8 @@ class Settings:
     barrier_request_timeout_sec: float = 3.0
     barrier_request_retries: int = 2
     barrier_verify_tls: bool = True
+    barrier_state_poll_interval_sec: float = 2.0
+    camera_config_refresh_sec: float = 3.0
     barrier_close_delay_sec: float = 5.0
     # open_only: system sends only open commands; barrier's own auto-close timer handles closing.
     # Prevents command competition with a guard's manual remote on toggle/impulse barriers.
@@ -105,9 +107,6 @@ class Settings:
     alpr_ocr_providers: str = ""
     motion_hold_enabled: bool = True
     motion_hold_threshold: float = 0.02
-    barrier_state_enabled: bool = True
-    barrier_state_threshold: float = 0.05
-    barrier_state_reference_delay_sec: float = 3.0
 
     def is_ha_configured(self) -> bool:
         return bool(self.barrier_ha_base_url and self.barrier_ha_token)
@@ -172,6 +171,12 @@ class Settings:
                 os.getenv("BARRIER_REQUEST_RETRIES", Settings.barrier_request_retries)
             ),
             barrier_verify_tls=os.getenv("BARRIER_VERIFY_TLS", "1") in {"1", "true", "True"},
+            barrier_state_poll_interval_sec=float(
+                os.getenv("BARRIER_STATE_POLL_INTERVAL_SEC", Settings.barrier_state_poll_interval_sec)
+            ),
+            camera_config_refresh_sec=float(
+                os.getenv("CAMERA_CONFIG_REFRESH_SEC", Settings.camera_config_refresh_sec)
+            ),
             barrier_close_delay_sec=float(
                 os.getenv("BARRIER_CLOSE_DELAY_SEC", Settings.barrier_close_delay_sec)
             ),
@@ -219,7 +224,4 @@ class Settings:
             alpr_ocr_providers=os.getenv("ALPR_OCR_PROVIDERS", Settings.alpr_ocr_providers),
             motion_hold_enabled=os.getenv("MOTION_HOLD_ENABLED", "1") in {"1", "true", "True"},
             motion_hold_threshold=float(os.getenv("MOTION_HOLD_THRESHOLD", Settings.motion_hold_threshold)),
-            barrier_state_enabled=os.getenv("BARRIER_STATE_ENABLED", "1") in {"1", "true", "True"},
-            barrier_state_threshold=float(os.getenv("BARRIER_STATE_THRESHOLD", Settings.barrier_state_threshold)),
-            barrier_state_reference_delay_sec=float(os.getenv("BARRIER_STATE_REFERENCE_DELAY_SEC", Settings.barrier_state_reference_delay_sec)),
         )

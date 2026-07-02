@@ -173,7 +173,6 @@ export function StatusPanel({ onClose }: StatusPanelProps) {
                                                             </span>
                                                         )}
                                                         {!b.state_check_enabled && <span className="text-slate-600">check disabled</span>}
-                                                        {b.has_model && <span className="text-violet-400">model</span>}
                                                     </div>
                                                 </div>
                                             </div>
@@ -219,23 +218,6 @@ export function StatusPanel({ onClose }: StatusPanelProps) {
                             </div>
                         )}
 
-                        {/* Barrier Check Zones */}
-                        {status.check_zones.length > 0 && (
-                            <div>
-                                <SectionHeader title="Barrier Check Zones" count={status.check_zones.length} />
-                                <div className="grid grid-cols-1 gap-0 sm:grid-cols-2 lg:grid-cols-3">
-                                    {status.check_zones.map((z) => (
-                                        <div key={z.id} className="px-6 py-3 border-b border-slate-800/40">
-                                            <p className="text-sm font-medium text-slate-100 truncate">{z.name || `Check zone ${z.id}`}</p>
-                                            <p className="text-xs text-slate-500">
-                                                {[z.camera_name, z.barrier_name ? `→ ${z.barrier_name}` : null].filter(Boolean).join(" · ")}
-                                            </p>
-                                        </div>
-                                    ))}
-                                </div>
-                            </div>
-                        )}
-
                         {/* Motion Zones */}
                         {status.motion_zones.length > 0 && (
                             <div>
@@ -270,7 +252,7 @@ export function StatusPanel({ onClose }: StatusPanelProps) {
                                 <div className="px-6 py-4">
                                     <p className="text-xs text-slate-500 uppercase tracking-wider">Zones configured</p>
                                     <p className="mt-1 text-sm text-slate-300">
-                                        {status.ocr_zones.length} OCR · {status.check_zones.length} check · {status.motion_zones.length} motion
+                                        {status.ocr_zones.length} OCR · {status.motion_zones.length} motion
                                     </p>
                                 </div>
                             </div>

@@ -3,11 +3,13 @@ from __future__ import annotations
 import json
 import os
 import re
+from collections.abc import Sequence
 from datetime import datetime
 
 import cv2
 
 from .alpr_service import AlprService
+from .types import PlateDetection
 
 
 
@@ -75,6 +77,7 @@ def write_recognition_snapshot(
     *,
     frame,
     alpr: AlprService,
+    detections: Sequence[PlateDetection] = (),
     captured_at: datetime,
     frame_id: str,
     plate: str | None,
@@ -89,9 +92,9 @@ def write_recognition_snapshot(
     os.makedirs(output_dir, exist_ok=True)
 
     annotated = frame
-    if apply_alpr_predictions:
+    if apply_alpr_predictions and detections:
         try:
-            annotated, _ = alpr.draw_predictions(frame)
+            annotated = alpr.draw_detections(frame, detections)
         except Exception:
             annotated = frame
 

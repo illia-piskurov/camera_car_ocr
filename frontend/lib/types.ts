@@ -57,33 +57,8 @@ export type Barrier = {
     ha_open_sensor_id: string
     ha_close_sensor_id: string
     state_check_enabled: boolean
-    state_threshold: number
-    state_reference_event_id: number | null
-    has_reference: boolean
-    has_model: boolean
     created_at: string
     updated_at: string
-}
-
-export type CalibrationSample = {
-    event_id: number
-    occurred_at: string | null
-    image_url: string
-    crop_b64: string | null
-    diff_score: number | null
-    model_prob: number | null
-    predicted_label: "open" | "closed" | null
-    user_label: "open" | "closed" | null
-}
-
-export type CalibrationData = {
-    barrier_id: number
-    reference_event_id: number | null
-    has_reference: boolean
-    has_model: boolean
-    threshold: number
-    samples: CalibrationSample[]
-    error?: string
 }
 
 export type DetectionZone = {
@@ -103,19 +78,6 @@ export type DetectionZone = {
     cross_zone_id: number | null
     zone_group_id?: number | null
     zone_type?: string
-}
-
-export type BarrierZone = {
-    id: number
-    barrier_id: number | null
-    camera_id?: number | null
-    name?: string
-    x_min: number
-    y_min: number
-    x_max: number
-    y_max: number
-    rotation?: number  // degrees, 0 = no rotation, clockwise
-    zone_type: "barrier_check"
 }
 
 export type MotionZone = {
@@ -142,7 +104,6 @@ export type SystemStatusBarrier = {
     id: number
     name: string
     state_check_enabled: boolean
-    has_model: boolean
     state: string | null
     state_age_sec: number | null
     state_stale: boolean
@@ -175,7 +136,6 @@ export type SystemStatus = {
     cameras: SystemStatusCamera[]
     barriers: SystemStatusBarrier[]
     ocr_zones: SystemStatusOcrZone[]
-    check_zones: SystemStatusZone[]
     motion_zones: SystemStatusZone[]
     whitelist: { active: number; inactive: number }
     last_sync_at: string | null
@@ -279,7 +239,6 @@ export type PreviewData = {
     last_decision: string | null
     zones: DetectionZone[]
     barriers: Barrier[]
-    barrier_zones: BarrierZone[]
     barrier_motion_zones: MotionZone[]
     max_zones: number
     image_url: string | null

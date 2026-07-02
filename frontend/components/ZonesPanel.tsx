@@ -2,7 +2,7 @@
 
 import { useMemo } from "react"
 import { Button } from "@/components/ui/button"
-import type { Barrier, BarrierZone, DetectionZone, MotionZone, ZoneGroup } from "@/lib/types"
+import type { Barrier, DetectionZone, MotionZone, ZoneGroup } from "@/lib/types"
 
 type ZonesPanelProps = {
     zones: DetectionZone[]
@@ -19,16 +19,6 @@ type ZonesPanelProps = {
     onUpdateZone: (index: number, updater: (zone: DetectionZone) => DetectionZone) => void
     onRemoveZone: (index: number) => void
     onOpenBarriers: () => void
-    activeCheckBarrierId: number | null
-    activeCheckZone: BarrierZone | null
-    activeCheckZoneDirty: boolean
-    activeCheckZoneSaving: boolean
-    activeCheckZoneMessage: string | null
-    onSelectCheckBarrier: (barrierId: number | null) => void
-    onSetCheckZone: () => void
-    onSaveCheckZone: () => void
-    onDeleteCheckZone: () => void
-    onResetCheckZone: () => void
     // Motion zones
     motionZones: MotionZone[]
     activeMotionZone: MotionZone | null
@@ -69,16 +59,6 @@ export function ZonesPanel({
     onUpdateZone,
     onRemoveZone,
     onOpenBarriers,
-    activeCheckBarrierId,
-    activeCheckZone,
-    activeCheckZoneDirty,
-    activeCheckZoneSaving,
-    activeCheckZoneMessage,
-    onSelectCheckBarrier,
-    onSetCheckZone,
-    onSaveCheckZone,
-    onDeleteCheckZone,
-    onResetCheckZone,
     motionZones,
     activeMotionZone,
     activeMotionZoneBarrierId,

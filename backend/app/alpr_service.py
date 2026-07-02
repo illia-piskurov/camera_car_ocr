@@ -6,6 +6,7 @@ from collections.abc import Sequence
 from typing import Any
 from uuid import uuid4
 
+import cv2
 import numpy as np
 
 from fast_alpr import ALPR
@@ -29,25 +30,32 @@ class AlprService:
             ocr_providers=ocr_providers,
         )  # type: ignore[arg-type]
 
-    def draw_predictions(self, frame: np.ndarray) -> tuple[np.ndarray, list[str]]:
-        drawn: Any = self.alpr.draw_predictions(frame)
-        annotated = getattr(drawn, "image", frame)
-        raw_results: list[Any] = list(getattr(drawn, "results", []) or [])
+    def draw_detections(self, frame: np.ndarray, detections: Sequence[PlateDetection]) -> np.ndarray:
+        """Draw bounding boxes/labels for already-computed detections.
 
-        plates: list[str] = []
-        for item in raw_results:
-            ocr_obj = getattr(item, "ocr", None)
-            raw_text = (getattr(ocr_obj, "text", "") or "").strip()
-            if not raw_text:
+        Unlike the underlying fast_alpr.draw_predictions(), this does not re-run
+        detector+OCR inference — it reuses bbox/text captured by detect() so a
+        saved snapshot never pays for a second full inference pass.
+        """
+        annotated = frame.copy()
+        for det in detections:
+            if det.bbox is None:
                 continue
-
-            plate = normalize_plate(raw_text)
-            if plate.normalized:
-                plates.append(plate.normalized)
-            else:
-                plates.append(raw_text)
-
-        return annotated, plates
+            x1, y1, x2, y2 = det.bbox
+            cv2.rectangle(annotated, (x1, y1), (x2, y2), (36, 255, 12), 2)
+            label = det.normalized_text or det.raw_text
+            if label:
+                cv2.putText(
+                    annotated,
+                    label,
+                    (x1, max(20, y1 - 10)),
+                    cv2.FONT_HERSHEY_SIMPLEX,
+                    0.6,
+                    (36, 255, 12),
+                    2,
+                    cv2.LINE_AA,
+                )
+        return annotated
 
     def detect(
         self,
@@ -79,6 +87,11 @@ class AlprService:
             elif isinstance(conf_obj, (float, int)):
                 ocr_conf = float(conf_obj)
 
+            bbox_obj = getattr(getattr(item, "detection", None), "bounding_box", None)
+            bbox: tuple[int, int, int, int] | None = None
+            if bbox_obj is not None:
+                bbox = (int(bbox_obj.x1), int(bbox_obj.y1), int(bbox_obj.x2), int(bbox_obj.y2))
+
             detections.append(
                 PlateDetection(
                     frame_id=effective_frame_id,
@@ -90,6 +103,7 @@ class AlprService:
                     ocr_confidence=float(ocr_conf),
                     zone_id=zone_id,
                     zone_name=zone_name,
+                    bbox=bbox,
                 )
             )
 

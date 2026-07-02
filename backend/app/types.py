@@ -15,6 +15,7 @@ class PlateDetection:
     ocr_confidence: float
     zone_id: int | None = None
     zone_name: str | None = None
+    bbox: tuple[int, int, int, int] | None = None
 
     @property
     def combined_confidence(self) -> float:

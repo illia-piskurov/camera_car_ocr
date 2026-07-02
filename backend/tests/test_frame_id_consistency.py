@@ -77,6 +77,10 @@ def test_run_uses_single_frame_fetch_per_cycle(monkeypatch) -> None:
             _ = (reason, plate, zone_id)
             return True
 
+        @staticmethod
+        def close_client() -> None:
+            return
+
     camera = CameraStub()
     db = DbStub()
     barrier = BarrierStub()
@@ -92,6 +96,8 @@ def test_run_uses_single_frame_fetch_per_cycle(monkeypatch) -> None:
         barrier_request_timeout_sec=5.0,
         barrier_request_retries=3,
         barrier_verify_tls=False,
+        barrier_state_poll_interval_sec=2.0,
+        camera_config_refresh_sec=0.0,
         poll_interval_sec=0.4,
         detection_zones_max=2,
         ocr_open_threshold=0.92,
@@ -104,9 +110,6 @@ def test_run_uses_single_frame_fetch_per_cycle(monkeypatch) -> None:
         barrier_open_only=False,
         motion_hold_enabled=False,
         motion_hold_threshold=0.02,
-        barrier_state_enabled=False,
-        barrier_state_threshold=0.05,
-        barrier_state_reference_delay_sec=3.0,
     )
 
     def fake_detect_in_zones(*, frame, alpr, detected_at, frame_id, active_zones):

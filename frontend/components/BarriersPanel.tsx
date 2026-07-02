@@ -382,7 +382,7 @@ export function BarriersPanel({ onClose, onBarriersChanged }: BarriersPanelProps
                 {/* Footer hint */}
                 <div className="shrink-0 border-t border-slate-700/70 px-4 py-3">
                     <p className="text-[11px] text-slate-500">
-                        Assign barriers to detection zones in the Zones panel. Configure check zones on the camera preview.
+                        Assign barriers to detection zones in the Zones panel. Barrier state is read from the Home Assistant sensors configured above.
                     </p>
                 </div>
             </div>
