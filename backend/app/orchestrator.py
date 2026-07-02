@@ -263,12 +263,24 @@ def _handle_detections(
         zone_decision = "open" if should_open else "deny"
         plate = decision_detection.normalized_text
 
-        # Open events always bypass zone cooldown — a whitelisted plate must never be blocked.
-        # Deny events are suppressed both by zone cooldown and by the per-plate 5-min suppress.
-        if should_open or (
-            not state.is_zone_in_cooldown(zone_id)
-            and not state.is_deny_suppressed(plate, zone_id)
-        ):
+        if should_open:
+            # A whitelisted vehicle sitting in the zone gets re-decided every poll
+            # cycle. The barrier action below already dedupes the physical open
+            # (ZoneRuntimeState.is_open), but recording used to bypass that and
+            # write a fresh DB row every cycle regardless — write only once per
+            # continuous open session; a new session (after the zone closes) gets
+            # its own row again.
+            zone_state = state.zone_states.get(zone_id)
+            should_record = zone_state is None or not zone_state.is_open
+        else:
+            # Deny events are suppressed both by zone cooldown and by the
+            # per-plate/zone suppress window (fuzzy-tolerant — see PipelineState).
+            should_record = (
+                not state.is_zone_in_cooldown(zone_id)
+                and not state.is_deny_suppressed(plate, zone_id)
+            )
+
+        if should_record:
             stages.record_decision_event(
                 detection=decision_detection,
                 decision=zone_decision,
@@ -280,6 +292,9 @@ def _handle_detections(
                 state.mark_deny(plate, zone_id)
             zones_written.add(zone_id)
 
+        # Barrier actuation and hold-refresh must still run every cycle the
+        # vehicle is present, independent of whether we wrote a DB row this time.
+        if should_open or should_record:
             zone_bid = zone_barrier_ids.get(zone_id) if zone_barrier_ids else None
             zone_barrier_state = barrier_states.get(zone_bid) if (barrier_states and zone_bid is not None) else None
             stages.execute_barrier_action(

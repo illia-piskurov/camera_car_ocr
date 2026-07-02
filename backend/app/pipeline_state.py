@@ -13,6 +13,7 @@ from typing import Any
 
 from .barrier import CLOSED as BS_CLOSED
 from .barrier import BarrierController
+from .fuzzy_edit import levenshtein_bounded
 from .runtime_state import ZoneRuntimeState
 
 LOG = logging.getLogger(__name__)
@@ -33,9 +34,12 @@ class PipelineState:
     # Cached HA barrier-sensor states, refreshed on a throttle instead of every frame poll.
     cached_barrier_states: dict[int, str] = field(default_factory=dict)
     last_barrier_state_check_ts: float = 0.0
-    # Suppress repeated deny/observed events for same plate+zone
-    _deny_ts: dict[tuple[str, int | None], float] = field(default_factory=dict)
-    _observed_ts: dict[tuple[str, int | None], float] = field(default_factory=dict)
+    # Suppress repeated deny/observed events for same plate+zone.
+    # Stored as zone_id -> [(plate, monotonic_ts), ...] instead of a plain
+    # (plate, zone_id) -> ts map so lookups can fuzzy-match near-identical plate
+    # reads (see DEDUP_FUZZY_MAX_DIST below).
+    _deny_recent: dict[int | None, list[tuple[str, float]]] = field(default_factory=dict)
+    _observed_recent: dict[int | None, list[tuple[str, float]]] = field(default_factory=dict)
     # Suppress all events from the same zone for N seconds after any event fires.
     # Prevents spam from repeated OCR frames of the same passing vehicle.
     # Open decisions always bypass this cooldown so a whitelisted plate is never blocked.
@@ -44,18 +48,57 @@ class PipelineState:
     DENY_SUPPRESS_SEC: float = 300.0     # 5 min — same plate can't spam deny alerts
     OBSERVED_SUPPRESS_SEC: float = 120.0 # 2 min — raw detection events
     ZONE_COOLDOWN_SEC: float = 8.0       # 8 s  — one vehicle pass per zone
+    # A vehicle sitting still in a zone gets re-OCR'd every poll cycle, and the
+    # read often flickers by one character (e.g. F/P/B, 0/O confusion). Without
+    # tolerance, each flicker looks like a "new" plate and defeats the suppression
+    # windows above, producing a burst of near-duplicate rows for one real vehicle.
+    DEDUP_FUZZY_MAX_DIST: int = 1
+
+    @staticmethod
+    def _recently_seen(
+        recent: dict[int | None, list[tuple[str, float]]],
+        plate: str,
+        zone_id: int | None,
+        suppress_sec: float,
+        max_dist: int,
+    ) -> bool:
+        now = time.monotonic()
+        for recent_plate, ts in recent.get(zone_id, []):
+            if now - ts >= suppress_sec:
+                continue
+            if recent_plate == plate:
+                return True
+            if levenshtein_bounded(plate, recent_plate, max_dist) <= max_dist:
+                return True
+        return False
+
+    @staticmethod
+    def _mark_seen(
+        recent: dict[int | None, list[tuple[str, float]]],
+        plate: str,
+        zone_id: int | None,
+        suppress_sec: float,
+    ) -> None:
+        now = time.monotonic()
+        entries = [item for item in recent.get(zone_id, []) if now - item[1] < suppress_sec]
+        entries.append((plate, now))
+        recent[zone_id] = entries
 
     def is_deny_suppressed(self, plate: str, zone_id: int | None) -> bool:
-        return time.monotonic() - self._deny_ts.get((plate, zone_id), 0.0) < self.DENY_SUPPRESS_SEC
+        return self._recently_seen(
+            self._deny_recent, plate, zone_id, self.DENY_SUPPRESS_SEC, self.DEDUP_FUZZY_MAX_DIST
+        )
 
     def mark_deny(self, plate: str, zone_id: int | None) -> None:
-        self._deny_ts[(plate, zone_id)] = time.monotonic()
+        self._mark_seen(self._deny_recent, plate, zone_id, self.DENY_SUPPRESS_SEC)
 
     def is_observed_suppressed(self, plate: str, zone_id: int | None) -> bool:
-        return time.monotonic() - self._observed_ts.get((plate, zone_id), 0.0) < self.OBSERVED_SUPPRESS_SEC
+        return self._recently_seen(
+            self._observed_recent, plate, zone_id, self.OBSERVED_SUPPRESS_SEC, self.DEDUP_FUZZY_MAX_DIST
+        )
 
     def mark_observed(self, plate: str, zone_id: int | None) -> None:
-        self._observed_ts[(plate, zone_id)] = time.monotonic()
+        self._mark_seen(self._observed_recent, plate, zone_id, self.OBSERVED_SUPPRESS_SEC)
 
     def is_zone_in_cooldown(self, zone_id: int | None) -> bool:
         return time.monotonic() - self._zone_cooldown_ts.get(zone_id, 0.0) < self.ZONE_COOLDOWN_SEC
@@ -139,7 +182,7 @@ class PipelineState:
             zone_states={},
             last_preview_write_ts=0.0,
             last_no_zone_warning_ts=0.0,
-            _deny_ts={},
-            _observed_ts={},
+            _deny_recent={},
+            _observed_recent={},
             _zone_cooldown_ts={},
         )
