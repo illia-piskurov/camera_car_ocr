@@ -10,6 +10,7 @@ import type {
     PeerZone,
     PreviewData,
     SaveZonesResponse,
+    ClientAppInfo,
     SystemStatus,
     WhitelistEntry,
     WhitelistPage,
@@ -375,6 +376,14 @@ export async function fetchSystemStatus(signal?: AbortSignal): Promise<SystemSta
     const response = await fetch(`${API_BASE}/api/status`, { cache: "no-store", signal })
     if (!response.ok) throw new Error(`Status request failed: ${response.status}`)
     return (await response.json()) as SystemStatus
+}
+
+export const CLIENT_APP_DOWNLOAD_URL = `${API_BASE}/api/client-app/download`
+
+export async function fetchClientAppInfo(signal?: AbortSignal): Promise<ClientAppInfo> {
+    const response = await fetch(`${API_BASE}/api/client-app/info`, { cache: "no-store", signal })
+    if (!response.ok) throw new Error(`Client app info request failed: ${response.status}`)
+    return (await response.json()) as ClientAppInfo
 }
 
 export async function listZoneGroups(signal?: AbortSignal): Promise<ZoneGroup[]> {

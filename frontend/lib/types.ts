@@ -142,6 +142,19 @@ export type SystemStatus = {
     sync_age_sec: number | null
 }
 
+export type ClientAppInfo = {
+    available: boolean
+    source?: "github" | "cache"
+    artifact_id?: number
+    run_id?: number
+    branch?: string
+    created_at?: string
+    size_bytes?: number
+    up_to_date_cached?: boolean
+    warning?: string
+    error?: string
+}
+
 export type WhitelistEntry = {
     id: number
     plate: string

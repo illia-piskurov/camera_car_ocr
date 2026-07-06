@@ -108,6 +108,11 @@ class Settings:
     motion_hold_enabled: bool = True
     motion_hold_threshold: float = 0.02
 
+    pc_client_github_token: str = ""
+    pc_client_github_repo: str = "POLYSAN-LTD/camera_car_ocr"
+    pc_client_artifact_name: str = "ALPR-Monitor-Windows"
+    pc_client_release_cache_dir: str = "data/pc_client_release"
+
     def is_ha_configured(self) -> bool:
         return bool(self.barrier_ha_base_url and self.barrier_ha_token)
 
@@ -224,4 +229,10 @@ class Settings:
             alpr_ocr_providers=os.getenv("ALPR_OCR_PROVIDERS", Settings.alpr_ocr_providers),
             motion_hold_enabled=os.getenv("MOTION_HOLD_ENABLED", "1") in {"1", "true", "True"},
             motion_hold_threshold=float(os.getenv("MOTION_HOLD_THRESHOLD", Settings.motion_hold_threshold)),
+            pc_client_github_token=os.getenv("PC_CLIENT_GITHUB_TOKEN", Settings.pc_client_github_token),
+            pc_client_github_repo=os.getenv("PC_CLIENT_GITHUB_REPO", Settings.pc_client_github_repo),
+            pc_client_artifact_name=os.getenv("PC_CLIENT_ARTIFACT_NAME", Settings.pc_client_artifact_name),
+            pc_client_release_cache_dir=os.getenv(
+                "PC_CLIENT_RELEASE_CACHE_DIR", Settings.pc_client_release_cache_dir
+            ),
         )

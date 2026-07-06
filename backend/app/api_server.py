@@ -16,6 +16,7 @@ from .config import Settings
 from .db import Database, utc_now
 from .logging_utils import configure_logging
 from .onec_provider import create_whitelist_provider
+from . import pc_client_release
 from .zones import sanitize_zone
 
 cfg = Settings.from_env()
@@ -642,6 +643,59 @@ async def stream_events(
             "Cache-Control": "no-cache",
             "X-Accel-Buffering": "no",
         },
+    )
+
+
+@app.get("/api/client-app/info")
+def client_app_info() -> dict[str, object]:
+    """Metadata about the latest security-client (pc_client) Windows build.
+
+    The security PC has no internet access, so admins pull the installer through
+    this backend instead of GitHub directly. This endpoint checks GitHub for the
+    newest build without downloading it; falls back to the last cached build's
+    metadata if GitHub can't be reached right now.
+    """
+    cached = pc_client_release.get_cached_installer_path(cfg)
+    try:
+        latest = pc_client_release.fetch_latest_release_info(cfg)
+        return {
+            "available": True,
+            "source": "github",
+            "artifact_id": latest.artifact_id,
+            "run_id": latest.run_id,
+            "branch": latest.branch,
+            "created_at": latest.created_at,
+            "size_bytes": latest.size_bytes,
+            "up_to_date_cached": bool(cached and cached[1].get("artifact_id") == latest.artifact_id),
+        }
+    except pc_client_release.PcClientReleaseError as exc:
+        if cached is not None:
+            _, meta = cached
+            return {
+                "available": True,
+                "source": "cache",
+                "warning": str(exc),
+                **{k: meta[k] for k in ("artifact_id", "run_id", "branch", "created_at", "size_bytes")},
+            }
+        return {"available": False, "error": str(exc)}
+
+
+@app.get("/api/client-app/download")
+def client_app_download() -> FileResponse:
+    """Serve the latest cached security-client installer, downloading a fresh one from
+    GitHub Actions first if a newer build is available."""
+    try:
+        installer_path, meta = pc_client_release.ensure_cached_installer(cfg)
+    except pc_client_release.PcClientReleaseError as exc:
+        cached = pc_client_release.get_cached_installer_path(cfg)
+        if cached is None:
+            raise HTTPException(status_code=502, detail=str(exc)) from exc
+        installer_path, meta = cached
+
+    return FileResponse(
+        installer_path,
+        filename=installer_path.name,
+        media_type="application/octet-stream",
     )
 
 

@@ -1,10 +1,10 @@
 "use client"
 
 import { useCallback, useEffect, useRef, useState } from "react"
-import { RefreshCw, X } from "lucide-react"
+import { Download, RefreshCw, X } from "lucide-react"
 import { Button } from "@/components/ui/button"
-import { fetchSystemStatus } from "@/lib/api"
-import type { SystemStatus } from "@/lib/types"
+import { CLIENT_APP_DOWNLOAD_URL, fetchClientAppInfo, fetchSystemStatus } from "@/lib/api"
+import type { ClientAppInfo, SystemStatus } from "@/lib/types"
 
 function formatAge(sec: number | null | undefined): string {
     if (sec == null) return "—"
@@ -56,6 +56,7 @@ export function StatusPanel({ onClose }: StatusPanelProps) {
     const [loading, setLoading] = useState(false)
     const [error, setError] = useState<string | null>(null)
     const [lastRefresh, setLastRefresh] = useState<Date | null>(null)
+    const [clientAppInfo, setClientAppInfo] = useState<ClientAppInfo | null>(null)
     const abortRef = useRef<AbortController | null>(null)
 
     const load = useCallback(async () => {
@@ -75,6 +76,10 @@ export function StatusPanel({ onClose }: StatusPanelProps) {
         } finally {
             setLoading(false)
         }
+
+        fetchClientAppInfo(ac.signal)
+            .then(setClientAppInfo)
+            .catch(() => setClientAppInfo(null))
     }, [])
 
     useEffect(() => { void load() }, [load])
@@ -234,6 +239,38 @@ export function StatusPanel({ onClose }: StatusPanelProps) {
                                 </div>
                             </div>
                         )}
+
+                        {/* Client App */}
+                        <div>
+                            <SectionHeader title="Client App (охорона)" />
+                            <div className="px-6 py-4">
+                                {clientAppInfo?.available ? (
+                                    <div className="flex flex-wrap items-center justify-between gap-3">
+                                        <div className="min-w-0">
+                                            <p className="text-sm text-slate-200">
+                                                Гілка <span className="font-mono text-slate-100">{clientAppInfo.branch}</span>
+                                                {" · "}
+                                                {formatTime(clientAppInfo.created_at)}
+                                            </p>
+                                            <p className="text-xs text-slate-500">
+                                                {clientAppInfo.size_bytes != null && `${(clientAppInfo.size_bytes / 1024 / 1024).toFixed(1)} МБ`}
+                                                {clientAppInfo.source === "cache" && " · показано останню завантажену збірку (GitHub недоступний)"}
+                                            </p>
+                                        </div>
+                                        <a href={CLIENT_APP_DOWNLOAD_URL} download>
+                                            <Button size="sm" className="gap-2 bg-emerald-600 text-white hover:bg-emerald-500">
+                                                <Download className="size-4" />
+                                                Завантажити для ПК охорони
+                                            </Button>
+                                        </a>
+                                    </div>
+                                ) : (
+                                    <p className="text-sm text-slate-400">
+                                        {clientAppInfo?.error ?? "Інформація про клієнтську програму недоступна"}
+                                    </p>
+                                )}
+                            </div>
+                        </div>
 
                         {/* System Info */}
                         <div>
