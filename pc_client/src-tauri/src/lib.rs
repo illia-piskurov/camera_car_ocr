@@ -364,7 +364,13 @@ async fn sse_loop(
                                 "Event #{} plate={} decision={} reason={}",
                                 event.id, event.plate, event.decision, event.reason_code
                             );
-                            if event.decision == "open" || event.decision == "deny" {
+                            // Zone-group suppression means this vehicle was already
+                            // granted access at a peer zone in the same group — it is
+                            // not a real denial and must not overwrite the "ВІДКРИТО"
+                            // card still on screen with a spurious "ВІДМОВЛЕНО" one.
+                            let is_group_suppressed = event.decision == "deny"
+                                && event.reason_code == "zone_group_suppressed";
+                            if (event.decision == "open" || event.decision == "deny") && !is_group_suppressed {
                                 app.emit("recognition-event", &event).ok();
                             }
                         }
