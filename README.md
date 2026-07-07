@@ -280,3 +280,24 @@ cp systemd/camera-car-worker.service /etc/systemd/system/
 systemctl daemon-reload
 systemctl restart camera-car-worker
 ```
+
+# OpenVINO on Linux!!
+
+1. Знайшов реальну помилку
+  Запустив python -c "import onnxruntime" — отримав повне повідомлення:
+  cannot enable executable stack as shared object requires: Invalid argument
+
+2. Підтвердив причину
+  Перевірив заголовки .so-файлу через readelf:
+  GNU_STACK   RWE   ← виконуваний стек (Read + Write + Execute)
+  Ядро Proxmox (hardened / LXC-контейнер) блокує завантаження бібліотек, які вимагають виконуваного стеку — це захист від певного класу експлойтів.
+
+3. Встановив patchelf
+  apt-get install -y patchelf
+
+4. Прибрав прапор виконуваного стеку з .so-файлу
+  patchelf --clear-execstack onnxruntime_pybind11_state.cpython-311-x86_64-linux-gnu.so
+  Це змінює один біт в ELF-заголовку файлу — сам код бібліотеки не змінюється.
+
+  ---
+  Важливо: якщо ти оновиш або перевстановиш onnxruntime через uv, нова версія .so знову матиме цей прапор, і треба буде повторити команду patchelf.
