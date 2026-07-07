@@ -1,6 +1,8 @@
 from __future__ import annotations
 # pyright: reportArgumentType=false, reportOptionalMemberAccess=false, reportCallIssue=false
 
+import logging
+import time
 from datetime import datetime, timezone
 from collections.abc import Sequence
 from typing import Any
@@ -13,6 +15,8 @@ from fast_alpr import ALPR
 
 from .normalization import is_valid_ua_plate, normalize_plate
 from .types import PlateDetection
+
+logger = logging.getLogger(__name__)
 
 
 class AlprService:
@@ -67,7 +71,15 @@ class AlprService:
     ) -> list[PlateDetection]:
         when = detected_at or datetime.now(timezone.utc)
         effective_frame_id = frame_id or uuid4().hex
+        started_at = time.perf_counter()
         results: list[Any] = self.alpr.predict(frame)
+        elapsed_ms = (time.perf_counter() - started_at) * 1000
+        logger.info(
+            "alpr.predict frame_id=%s zone=%s took=%.1fms",
+            effective_frame_id,
+            zone_name or zone_id,
+            elapsed_ms,
+        )
         detections: list[PlateDetection] = []
 
         for item in results:

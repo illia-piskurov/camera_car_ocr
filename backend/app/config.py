@@ -120,14 +120,24 @@ class Settings:
         return self.camera_credentials_encryption_key
 
     @staticmethod
-    def _parse_provider_list(value: str) -> list[str] | None:
-        providers = [provider.strip() for provider in value.split(",") if provider.strip()]
+    def _parse_provider_list(value: str) -> list[str | tuple[str, dict]] | None:
+        providers: list[str | tuple[str, dict]] = []
+        for provider in value.split(","):
+            provider = provider.strip()
+            if not provider:
+                continue
+            if provider == "OpenVINOExecutionProvider":
+                # Prefer the iGPU when present; OpenVINO's AUTO device plugin
+                # falls back to CPU on its own if no GPU is detected or init fails.
+                providers.append((provider, {"device_type": "AUTO:GPU,CPU"}))
+            else:
+                providers.append(provider)
         return providers or None
 
-    def get_alpr_detector_providers(self) -> Sequence[str] | None:
+    def get_alpr_detector_providers(self) -> Sequence[str | tuple[str, dict]] | None:
         return self._parse_provider_list(self.alpr_detector_providers)
 
-    def get_alpr_ocr_providers(self) -> Sequence[str] | None:
+    def get_alpr_ocr_providers(self) -> Sequence[str | tuple[str, dict]] | None:
         return self._parse_provider_list(self.alpr_ocr_providers)
 
     def _scoped_preview_path(self, base_path: str, camera_id: int | None) -> str:

@@ -15,3 +15,8 @@ dependencies = [
     "openvino==2024.4.0",
     "onnxruntime-openvino==1.20.0",
 ]
+
+[dependency-groups]
+dev = [
+    "py-spy>=0.4.2",
+]
